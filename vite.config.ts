@@ -19,6 +19,10 @@ export default defineConfig({
         ]
       : []),
   ],
+
+  // Your source code lives here
+  root: path.resolve(import.meta.dirname, "client"),
+
   resolve: {
     alias: {
       "@": path.resolve(import.meta.dirname, "client", "src"),
@@ -26,11 +30,20 @@ export default defineConfig({
       "@assets": path.resolve(import.meta.dirname, "attached_assets"),
     },
   },
-  root: path.resolve(import.meta.dirname, "client"),
+
   build: {
-    outDir: path.resolve(import.meta.dirname, "dist/public"),
+    // IMPORTANT: Output to dist/, not dist/public/
+    outDir: path.resolve(import.meta.dirname, "dist"),
+
+    // Make sure dist is cleaned first
     emptyOutDir: true,
+
+    // Tells Vite where your index.html lives (inside client/)
+    rollupOptions: {
+      input: path.resolve(import.meta.dirname, "client/index.html"),
+    }
   },
+
   server: {
     fs: {
       strict: true,
