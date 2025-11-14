@@ -1,9 +1,26 @@
+########################################
+# Netlify Configuration for RVRBETA
+########################################
+
 [build]
-  # Build the Vite client + bundled server
+  # Build the Vite frontend
   command = "npm run build"
 
-  # Vite outputs to dist/, not dist/public/
+  # Vite outputs static build to /dist
   publish = "dist"
 
 [build.environment]
+  # Netlify supports Node 18 LTS
   NODE_VERSION = "18"
+  NPM_FLAGS = "--no-fund --no-audit"
+
+########################################
+# Optional: Redirects (SPA fallback)
+########################################
+# Ensures Vite/Wouter routing works
+# so deep links like /river-conditions load correctly
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
