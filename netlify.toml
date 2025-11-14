@@ -1,7 +1,8 @@
 [build]
-  command = "npm run prebuild && npm run netlify:build"
-  publish = "dist"
-  functions = "netlify/functions"
+  # Just build the Vite client
+  command = "npm run build"
+  # Serve the built React app
+  publish = "dist/public"
 
 [build.environment]
   NODE_VERSION = "18"

@@ -1,11 +1,9 @@
-cat > .gitignore << 'EOF'
 node_modules
 dist
 .env
-.vscode
-.DS_Store
-*.log
+.env.*
 npm-debug.log*
-.cache
-netlify/cache
-EOF
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.DS_Store
