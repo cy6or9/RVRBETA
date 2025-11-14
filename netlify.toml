@@ -1,8 +1,9 @@
 [build]
-  # Just build the Vite client
+  # Build the Vite client + bundled server
   command = "npm run build"
-  # Serve the built React app
-  publish = "dist/public"
+
+  # Vite outputs to dist/, not dist/public/
+  publish = "dist"
 
 [build.environment]
   NODE_VERSION = "18"
