@@ -1,24 +1,20 @@
-########################################
-# Netlify config for Vite project in /client
-########################################
+###############################################
+# Netlify config for Vite+React inside /client
+###############################################
 
 [build]
-  # The real project lives inside the "client" folder
   base = "client"
-
-  # Build command for Vite
   command = "npm run build"
-
-  # After build, Vite outputs to /client/dist
-  publish = "client/dist"
+  publish = "dist"
 
 [build.environment]
   NODE_VERSION = "18"
 
-########################################
-# SPA Redirects (required for Wouter)
-########################################
+###############################################
+# SPA redirects for Wouter
+###############################################
 [[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200
+
