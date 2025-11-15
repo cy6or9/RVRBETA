@@ -1,0 +1,38 @@
+{
+  "UNWK2": {
+    "location": "Ohio River at J.T. Myers Lock & Dam (Uniontown KY)",
+    "observed": "13.8",
+    "floodStage": "37",
+    "time": "2025-11-11T23:00:00Z"
+  },
+  "CARI3": {
+    "location": "Cannelton Lock & Dam (IN)",
+    "observed": "14.2",
+    "floodStage": "37",
+    "time": "2025-11-11T23:00:00Z"
+  },
+  "EVVI3": {
+    "location": "Evansville IN",
+    "observed": "13.5",
+    "floodStage": "37",
+    "time": "2025-11-11T23:00:00Z"
+  },
+  "HPTI3": {
+    "location": "Henderson KY",
+    "observed": "13.6",
+    "floodStage": "37",
+    "time": "2025-11-11T23:00:00Z"
+  },
+  "SHNI2": {
+    "location": "Shawneetown IL",
+    "observed": "13.7",
+    "floodStage": "37",
+    "time": "2025-11-11T23:00:00Z"
+  },
+  "CINI2": {
+    "location": "Cairo IL",
+    "observed": "14.0",
+    "floodStage": "37",
+    "time": "2025-11-11T23:00:00Z"
+  }
+}
