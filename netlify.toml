@@ -1,11 +1,13 @@
 [build]
-  base = ""              # IMPORTANT: use project root
   command = "npm run build"
   publish = "dist"
 
 [functions]
   directory = "netlify/functions"
 
-[build.environment]
-  NODE_VERSION = "18"
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
 
