@@ -4,11 +4,10 @@
   "type": "module",
   "license": "MIT",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview",
-    "check": "tsc"
-  },
+  "dev": "vite",
+  "build": "vite build",
+  "preview": "vite preview"
+}
   "dependencies": {
     "@google-cloud/storage": "^7.17.3",
     "@hookform/resolvers": "^3.10.0",
