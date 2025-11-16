@@ -1,7 +1,12 @@
 [build]
-  command = "npm run prebuild && npm run netlify:build"
-  publish = "dist"
+  # Only build the frontend for Netlify
+  command = "npm run netlify:build"
+  # This must match Vite's output directory in vite.config.ts
+  publish = "dist/public"
+
+  # You CAN keep this if you later want Netlify Functions, but it's not required
   functions = "netlify/functions"
 
 [build.environment]
+  # Matches your current config & supports top-level await in vite.config.ts
   NODE_VERSION = "18"
