@@ -1,4 +1,6 @@
-const API_BASE = "https://rvr-backend.onrender.com";
+export const API_BASE = (
+  import.meta.env.VITE_API_BASE ?? "https://rvr-backend.onrender.com"
+).replace(/\/$/, "");
 
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
 
@@ -14,7 +16,7 @@ export async function apiRequest(
   url: string,
   data?: unknown | undefined,
 ): Promise<Response> {
-  const res = await fetch(API_BASE + url, {
+  const res = await fetch(`${API_BASE}${url}`, {
     method,
     headers: data ? { "Content-Type": "application/json" } : {},
     body: data ? JSON.stringify(data) : undefined,
@@ -31,7 +33,8 @@ export const getQueryFn: <T>(options: {
 }) => QueryFunction<T> =
   ({ on401: unauthorizedBehavior }) =>
   async ({ queryKey }) => {
-    const res = await fetch(queryKey.join("/") as string, {
+    const endpoint = `${API_BASE}${queryKey[0] as string}`;
+    const res = await fetch(endpoint, {
       credentials: "include",
     });
 
