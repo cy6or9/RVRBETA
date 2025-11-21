@@ -351,7 +351,9 @@ export default function RiverConditions() {
 
   /* ---------------- River Data (selected station) ---------------- */
   async function loadRiver(site: string) {
-    const r = await fetch(`${API_BASE}/api/river-data?site=${site}&_=${Date.now()}`);
+    const r = await fetch(`${API_BASE}/api/river-data?site=${site}&_=${Date.now()}`, {
+      credentials: "include",
+    });
     const j = (await r.json()) as RiverData;
     setData(j);
 
@@ -404,7 +406,9 @@ export default function RiverConditions() {
   /* ---------------- AQI (from your server, based on wxLoc) ---------------- */
   async function loadAQI(lat: number, lon: number) {
     try {
-      const r = await fetch(`${API_BASE}/api/aqi?lat=${lat}&lon=${lon}`);
+      const r = await fetch(`${API_BASE}/api/aqi?lat=${lat}&lon=${lon}`, {
+        credentials: "include",
+      });
       if (!r.ok) throw new Error(`AQI HTTP ${r.status}`);
       const j = (await r.json()) as AQIData;
       setAqi(j);
