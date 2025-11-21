@@ -15,7 +15,7 @@ import {
 import { ArrowLeft, Save, Eye, Upload, X } from "lucide-react";
 import { useState, useEffect } from "react";
 import type { Article, InsertArticle } from "@shared/schema";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { API_BASE, apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
 export default function ArticleEditor() {
@@ -99,9 +99,10 @@ export default function ArticleEditor() {
       const formData = new FormData();
       formData.append("image", file);
 
-      const response = await fetch("/api/upload", {
+      const response = await fetch(`${API_BASE}/api/upload`, {
         method: "POST",
         body: formData,
+        credentials: "include",
       });
 
       if (!response.ok) throw new Error("Upload failed");
