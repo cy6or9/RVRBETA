@@ -1,4 +1,25 @@
+# Dependencies
 node_modules
-.next/
-dist/
+
+# Next.js build output
+.next
+out
+dist
+
+# Hosting / framework specific
+.vercel
+.netlify
+
+# Local environment files (DO NOT COMMIT SECRETS)
 .env
+.env.local
+.env.*.local
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS cruft
+.DS_Store
