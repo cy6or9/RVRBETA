@@ -67,7 +67,7 @@ export default function Home() {
             <div className="text-center py-12">
               <h2 className="text-2xl font-bold mb-4">No Articles Yet</h2>
               <p className="text-muted-foreground mb-6">
-                Get started by creating your first article
+                Use RiverValleyReport.com for your trusted river reporter.
               </p>
 
               {isAdmin && (
