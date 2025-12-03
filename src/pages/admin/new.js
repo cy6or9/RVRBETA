@@ -1,3 +1,4 @@
+// /src/pages/admin/new.js
 import Link from "next/link";
 import { useRouter } from "next/router";
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -89,10 +90,11 @@ export default function ArticleEditorPage() {
         router.push("/admin");
       }
     },
-    onError: () => {
+    onError: (error) => {
+      console.error("Save mutation failed:", error);
       toast({
         title: "Error",
-        description: "Failed to save article. Please try again.",
+        description: "Failed to save article. Please check your fields and try again.",
         variant: "destructive",
       });
     },
@@ -121,6 +123,7 @@ export default function ArticleEditorPage() {
         description: "Your image has been uploaded successfully.",
       });
     } catch (error) {
+      console.error("Upload failed:", error);
       toast({
         title: "Upload failed",
         description: "Failed to upload image. Please try again.",
@@ -189,13 +192,12 @@ export default function ArticleEditorPage() {
               </h1>
             </div>
 
-            {/* FIXED BUTTONS */}
             <div className="flex gap-2">
               <Button
                 type="button"
                 variant="outline"
                 className="gap-2"
-                onClick={() => handleSave()}
+                onClick={handleSave}
                 disabled={!isFormValid || saveMutation.isPending}
                 data-testid="button-save-draft"
               >
@@ -206,7 +208,7 @@ export default function ArticleEditorPage() {
               <Button
                 type="button"
                 className="gap-2"
-                onClick={() => handlePublish()}
+                onClick={handlePublish}
                 disabled={!isFormValid || saveMutation.isPending}
                 data-testid="button-publish"
               >

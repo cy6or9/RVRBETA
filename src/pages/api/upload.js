@@ -1,38 +1,23 @@
-import formidable from "formidable";
-import fs from "fs";
-import path from "path";
-
-export const config = {
-  api: {
-    bodyParser: false,
-  },
-};
+// /src/pages/api/upload.js
+// Minimal stub upload endpoint so the editor doesn't break.
+// NOTE: This does NOT actually store the uploaded file. It simply returns
+// a placeholder image URL so the UI works and articles can be saved.
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  const uploadDir = path.join(process.cwd(), "public/uploads");
+  // At this stage we are NOT parsing the multipart body, because doing
+  // real file uploads on Netlify would require external storage (S3, etc).
+  // We just respond with a valid JSON payload so the front-end flow works.
 
-  if (!fs.existsSync(uploadDir)) {
-    fs.mkdirSync(uploadDir, { recursive: true });
-  }
+  // Use a decent generic river image as a placeholder.
+  const placeholderUrl =
+    "https://images.unsplash.com/photo-1502218808492-05bcb9c3c087?auto=format&fit=crop&w=1200&q=80";
 
-  const form = formidable({ multiples: false, uploadDir, keepExtensions: true });
-
-  form.parse(req, (err, fields, files) => {
-    if (err) {
-      console.error(err);
-      return res.status(500).json({ error: "Upload failed" });
-    }
-
-    const file = files.image;
-    const filePath = `/uploads/${path.basename(file.filepath)}`;
-
-    return res.status(200).json({
-      message: "Upload successful",
-      imageUrl: filePath,
-    });
+  return res.status(200).json({
+    message: "Upload stub: using placeholder image.",
+    imageUrl: placeholderUrl,
   });
 }
