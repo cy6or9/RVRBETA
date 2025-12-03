@@ -1,23 +1,38 @@
 // /src/pages/api/upload.js
-// Minimal stub upload endpoint so the editor doesn't break.
-// NOTE: This does NOT actually store the uploaded file. It simply returns
-// a placeholder image URL so the UI works and articles can be saved.
+import { storage } from "@/lib/firebaseAdmin";
+import { v4 as uuid } from "uuid";
+
+export const config = { api: { bodyParser: false } };
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  // At this stage we are NOT parsing the multipart body, because doing
-  // real file uploads on Netlify would require external storage (S3, etc).
-  // We just respond with a valid JSON payload so the front-end flow works.
+  try {
+    const chunks = [];
+    req.on("data", (c) => chunks.push(c));
+    req.on("end", async () => {
+      const fileBuffer = Buffer.concat(chunks);
+      const fileName = `article-images/${uuid()}.jpg`;
+      const file = storage.file(fileName);
 
-  // Use a decent generic river image as a placeholder.
-  const placeholderUrl =
-    "https://images.unsplash.com/photo-1502218808492-05bcb9c3c087?auto=format&fit=crop&w=1200&q=80";
+      await file.save(fileBuffer, {
+        metadata: { contentType: "image/jpeg" },
+      });
 
-  return res.status(200).json({
-    message: "Upload stub: using placeholder image.",
-    imageUrl: placeholderUrl,
-  });
+      const [url] = await file.getSignedUrl({
+        action: "read",
+        expires: "03-01-2099",
+      });
+
+      return res.status(200).json({
+        message: "Upload successful",
+        imageUrl: url,
+      });
+    });
+  } catch (error) {
+    console.error("Upload error:", error);
+    return res.status(500).json({ error: "Upload failed" });
+  }
 }
