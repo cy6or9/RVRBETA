@@ -1,3 +1,4 @@
+// /src/pages/admin/index.js
 import Link from "next/link";
 import { useState, useMemo } from "react";
 import { useRouter } from "next/router";
@@ -14,24 +15,25 @@ import {
   Trash2,
   Search,
   FileText,
-  TrendingUp,
+  Loader2,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/context/AuthContext";
+import { useToast } from "@/hooks/use-toast";
 
-export default function AdminDashboard() {
+export default function AdminArticlesPage() {
   const router = useRouter();
-  const { user, isAdmin, loading } = useAuth();
-  const [searchQuery, setSearchQuery] = useState("");
+  const { isAdmin, loading } = useAuth();
   const { toast } = useToast();
+
+  const [searchTerm, setSearchTerm] = useState("");
 
   const {
     data: articles = [],
     isLoading,
   } = useQuery({
-    queryKey: ["/api/articles/all"],
-    queryFn: () => apiRequest("GET", "/api/articles/all"),
+    // FIX: use the real list endpoint
+    queryKey: ["/api/articles"],
   });
 
   const deleteMutation = useMutation({
@@ -39,9 +41,10 @@ export default function AdminDashboard() {
       await apiRequest("DELETE", `/api/articles/${id}`);
     },
     onSuccess: (_, deletedId) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/articles/all"] });
+      // FIX: invalidate the same key the list query uses
       queryClient.invalidateQueries({ queryKey: ["/api/articles"] });
-      queryClient.removeQueries({ queryKey: [`/api/articles/${deletedId}`] });
+      queryClient.removeQueries({ queryKey: ["/api/articles", deletedId] });
+
       toast({
         title: "Article deleted",
         description: "The article has been successfully deleted.",
@@ -58,26 +61,18 @@ export default function AdminDashboard() {
 
   const filteredArticles = useMemo(
     () =>
-      articles.filter((article) =>
-        article.title.toLowerCase().includes(searchQuery.toLowerCase())
-      ),
-    [articles, searchQuery]
+      articles.filter((article) => {
+        if (!searchTerm.trim()) return true;
+        const term = searchTerm.toLowerCase();
+        return (
+          article.title?.toLowerCase().includes(term) ||
+          article.excerpt?.toLowerCase().includes(term) ||
+          article.category?.toLowerCase().includes(term)
+        );
+      }),
+    [articles, searchTerm],
   );
 
-  const stats = useMemo(() => {
-    const total = articles.length;
-    const published = articles.filter((a) => a.status === "published").length;
-    const drafts = articles.filter((a) => a.status === "draft").length;
-    return { total, published, drafts };
-  }, [articles]);
-
-  const statItems = [
-    { label: "Total Articles", value: stats.total, icon: FileText },
-    { label: "Published", value: stats.published, icon: TrendingUp },
-    { label: "Drafts", value: stats.drafts, icon: Pencil },
-  ];
-
-  // --------- ADMIN GUARD ---------
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -90,175 +85,149 @@ export default function AdminDashboard() {
     return (
       <div className="min-h-screen flex items-center justify-center px-4">
         <Card className="max-w-md w-full p-6 text-center space-y-4">
-          <h1 className="text-xl font-bold mb-2">Admin access only</h1>
-          <p className="text-muted-foreground text-sm">
-            You must be signed in with an approved admin account to view the
-            dashboard.
+          <h1 className="text-xl font-semibold">Access Denied</h1>
+          <p className="text-muted-foreground">
+            You don&apos;t have permission to view this page.
           </p>
-          <Button onClick={() => router.push("/")}>Back to homepage</Button>
+          <Button onClick={() => router.push("/")}>Go to Homepage</Button>
         </Card>
       </div>
     );
   }
-  // --------------------------------
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="border-b bg-card sticky top-0 z-10">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
-            <div className="flex items-center gap-4">
-              <Link href="/">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  data-testid="button-back-home"
-                >
-                  <ArrowLeft className="w-5 h-5" />
-                </Button>
-              </Link>
-              <h1 className="text-xl font-bold">Admin Dashboard</h1>
+    <div className="min-h-screen flex flex-col bg-background">
+      <header className="border-b bg-card">
+        <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => router.push("/")}
+              className="hidden sm:inline-flex"
+            >
+              <ArrowLeft className="w-4 h-4" />
+            </Button>
+            <div>
+              <p className="text-xs text-muted-foreground uppercase tracking-wide">
+                Admin
+              </p>
+              <h1 className="text-xl sm:text-2xl font-bold flex items-center gap-2">
+                <FileText className="w-5 h-5" />
+                Manage Articles
+              </h1>
             </div>
-            <Link href="/admin/new">
-              <Button className="gap-2" data-testid="button-new-article">
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Button asChild>
+              <Link href="/admin/new" className="flex items-center gap-2">
                 <Plus className="w-4 h-4" />
-                New Article
-              </Button>
-            </Link>
+                <span className="hidden sm:inline">New Article</span>
+                <span className="sm:hidden">New</span>
+              </Link>
+            </Button>
           </div>
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-          {statItems.map((stat) => (
-            <Card key={stat.label} className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground mb-1">
-                    {stat.label}
-                  </p>
-                  <p
-                    className="text-3xl font-bold"
-                    data-testid={`text-stat-${stat.label
-                      .toLowerCase()
-                      .replace(/\s+/g, "-")}`}
-                  >
-                    {stat.value}
-                  </p>
-                </div>
-                <div className="w-12 h-12 bg-primary/10 rounded-lg flex items-center justify-center">
-                  <stat.icon className="w-6 h-6 text-primary" />
-                </div>
-              </div>
-            </Card>
-          ))}
-        </div>
-
-        <Card className="p-6">
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
-            <h2 className="text-xl font-semibold">All Articles</h2>
-            <div className="relative w-full sm:w-64">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+      <main className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
+        <Card className="p-4 sm:p-6 space-y-4 sm:space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-4 justify-between">
+            <div className="space-y-1">
+              <h2 className="text-lg font-semibold">Articles</h2>
+              <p className="text-sm text-muted-foreground">
+                Search, edit, publish, or delete articles.
+              </p>
+            </div>
+            <div className="relative w-full sm:w-72 md:w-80">
+              <Search className="absolute left-3 top-2.5 w-4 h-4 text-muted-foreground" />
               <Input
-                type="search"
-                placeholder="Search articles..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search by title, category, or text…"
                 className="pl-9"
-                data-testid="input-search-articles"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
               />
             </div>
           </div>
 
           {isLoading ? (
-            <div className="text-center py-8">
-              <p className="text-muted-foreground">Loading articles...</p>
+            <div className="flex justify-center py-12">
+              <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
             </div>
           ) : filteredArticles.length === 0 ? (
-            <div className="text-center py-8">
-              <p className="text-muted-foreground">
-                {searchQuery ? "No articles found" : "No articles yet"}
+            <div className="py-10 text-center text-muted-foreground">
+              <p className="font-medium mb-2">No articles found</p>
+              <p className="text-sm mb-4">
+                Try adjusting your search, or create a new article.
               </p>
+              <Button asChild>
+                <Link href="/admin/new">
+                  <Plus className="w-4 h-4 mr-2" />
+                  New Article
+                </Link>
+              </Button>
             </div>
           ) : (
             <div className="space-y-4">
               {filteredArticles.map((article) => (
                 <div
                   key={article.id}
-                  className="flex flex-col sm:flex-row items-start gap-4 p-4 border rounded-lg hover-elevate"
-                  data-testid={`row-article-${article.id}`}
+                  className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-3 sm:p-4 rounded-lg border bg-card"
                 >
-                  {article.imageUrl && (
-                    <div className="w-full sm:w-32 aspect-video overflow-hidden rounded-md flex-shrink-0">
-                      <img
-                        src={article.imageUrl}
-                        alt={article.title}
-                        className="w-full h-full object-cover"
-                      />
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h3 className="font-semibold leading-tight">
+                        {article.title}
+                      </h3>
+                      {article.status === "draft" ? (
+                        <Badge variant="outline" className="text-xs">
+                          Draft
+                        </Badge>
+                      ) : (
+                        <Badge className="text-xs">Published</Badge>
+                      )}
                     </div>
-                  )}
-                  <div className="flex-1 min-w-0">
-                    <h3
-                      className="font-semibold mb-1 line-clamp-1"
-                      data-testid={`text-article-title-${article.id}`}
-                    >
-                      {article.title}
-                    </h3>
-                    <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
-                      <Badge variant="secondary">{article.category}</Badge>
-                      <Badge
-                        variant={
-                          article.status === "published" ? "default" : "outline"
-                        }
-                      >
-                        {article.status === "published" ? "Published" : "Draft"}
-                      </Badge>
-                      <span>
-                        {new Date(article.createdAt).toLocaleDateString(
-                          "en-US",
-                          {
-                            month: "short",
-                            day: "numeric",
-                            year: "numeric",
-                          }
-                        )}
-                      </span>
-                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      {article.category} •{" "}
+                      {new Date(article.createdAt).toLocaleString()}
+                    </p>
+                    <p className="text-sm text-muted-foreground line-clamp-2">
+                      {article.excerpt}
+                    </p>
                   </div>
-                  <div className="flex gap-2 w-full sm:w-auto">
-                    <Link
-                      href={`/admin/edit/${article.id}`}
-                      className="flex-1 sm:flex-initial"
-                    >
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="gap-2 w-full"
-                        data-testid={`button-edit-${article.id}`}
-                      >
-                        <Pencil className="w-4 h-4" />
-                        <span className="sm:inline">Edit</span>
-                      </Button>
-                    </Link>
+
+                  <div className="flex items-center gap-2 self-start sm:self-center">
                     <Button
                       variant="outline"
                       size="sm"
-                      className="gap-2"
-                      onClick={() => {
-                        if (
-                          window.confirm(
-                            "Are you sure you want to delete this article?"
-                          )
-                        ) {
-                          deleteMutation.mutate(article.id);
-                        }
-                      }}
+                      asChild
+                      data-testid={`button-edit-${article.id}`}
+                    >
+                      <Link href={`/admin/edit/${article.id}`}>
+                        <Pencil className="w-4 h-4 mr-1" />
+                        <span className="hidden sm:inline">Edit</span>
+                        <span className="sm:hidden">Edit</span>
+                      </Link>
+                    </Button>
+
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      onClick={() =>
+                        deleteMutation.mutate(article.id, {
+                          onSuccess: () => {},
+                        })
+                      }
                       disabled={deleteMutation.isPending}
                       data-testid={`button-delete-${article.id}`}
                     >
-                      <Trash2 className="w-4 h-4" />
-                      <span className="sm:inline">Delete</span>
+                      {deleteMutation.isPending ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Trash2 className="w-4 h-4" />
+                      )}
+                      <span className="hidden sm:inline ml-1">Delete</span>
                     </Button>
                   </div>
                 </div>

@@ -4,21 +4,37 @@ import { v4 as uuid } from "uuid";
 
 export const config = { api: { bodyParser: false } };
 
-export default async function handler(req, res) {
+export default function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  try {
-    const chunks = [];
-    req.on("data", (c) => chunks.push(c));
-    req.on("end", async () => {
+  const contentType = req.headers["content-type"] || "application/octet-stream";
+
+  const chunks = [];
+
+  req.on("data", (chunk) => {
+    chunks.push(chunk);
+  });
+
+  req.on("end", async () => {
+    try {
       const fileBuffer = Buffer.concat(chunks);
-      const fileName = `article-images/${uuid()}.jpg`;
+
+      if (!fileBuffer.length) {
+        return res.status(400).json({ error: "No file received" });
+      }
+
+      const extFromType =
+        typeof contentType === "string" && contentType.includes("/")
+          ? contentType.split("/")[1]
+          : "bin";
+
+      const fileName = `article-images/${uuid()}.${extFromType}`;
       const file = storage.file(fileName);
 
       await file.save(fileBuffer, {
-        metadata: { contentType: "image/jpeg" },
+        metadata: { contentType },
       });
 
       const [url] = await file.getSignedUrl({
@@ -30,9 +46,18 @@ export default async function handler(req, res) {
         message: "Upload successful",
         imageUrl: url,
       });
-    });
-  } catch (error) {
-    console.error("Upload error:", error);
-    return res.status(500).json({ error: "Upload failed" });
-  }
+    } catch (error) {
+      console.error("Upload error:", error);
+      if (!res.headersSent) {
+        return res.status(500).json({ error: "Upload failed" });
+      }
+    }
+  });
+
+  req.on("error", (err) => {
+    console.error("Upload stream error:", err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: "Upload failed" });
+    }
+  });
 }

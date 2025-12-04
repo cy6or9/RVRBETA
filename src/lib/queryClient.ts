@@ -1,3 +1,4 @@
+// /src/lib/queryClient.ts
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
 
 async function throwIfResNotOk(res: Response) {
@@ -7,11 +8,15 @@ async function throwIfResNotOk(res: Response) {
   }
 }
 
-export async function apiRequest(
+/**
+ * Small helper for talking to our Next.js API routes.
+ * Always returns parsed JSON (or null if no JSON body).
+ */
+export async function apiRequest<T = any>(
   method: string,
   url: string,
-  data?: unknown | undefined,
-): Promise<Response> {
+  data?: unknown,
+): Promise<T | null> {
   const res = await fetch(url, {
     method,
     headers: data ? { "Content-Type": "application/json" } : {},
@@ -20,25 +25,37 @@ export async function apiRequest(
   });
 
   await throwIfResNotOk(res);
-  return res;
+
+  const contentType = res.headers.get("Content-Type") || "";
+  if (!contentType.includes("application/json")) {
+    return null as T | null;
+  }
+
+  return (await res.json()) as T;
 }
 
 type UnauthorizedBehavior = "returnNull" | "throw";
+
+/**
+ * Default queryFn used by React Query when only a queryKey is provided.
+ */
 export const getQueryFn: <T>(options: {
   on401: UnauthorizedBehavior;
 }) => QueryFunction<T> =
   ({ on401: unauthorizedBehavior }) =>
   async ({ queryKey }) => {
-    const res = await fetch(queryKey.join("/") as string, {
+    const url = queryKey.join("/") as string;
+
+    const res = await fetch(url, {
       credentials: "include",
     });
 
     if (unauthorizedBehavior === "returnNull" && res.status === 401) {
-      return null;
+      return null as T;
     }
 
     await throwIfResNotOk(res);
-    return await res.json();
+    return (await res.json()) as T;
   };
 
 export const queryClient = new QueryClient({
