@@ -1,7 +1,6 @@
 /**
  * AQI API — Unified format for UI
- * Reads from AirNow if you set AIRNOW_API_KEY
- * Falls back to an OpenAQ derived category if needed
+ * Priority: AirNow → OpenAQ → fallback
  */
 
 const AQI_LABELS = [
@@ -14,8 +13,52 @@ const AQI_LABELS = [
 ];
 
 function getCategory(aqi) {
-  if (aqi == null) return null;
+  if (aqi == null) return "Unknown";
   return AQI_LABELS.find((l) => aqi <= l.max)?.label ?? "Hazardous";
+}
+
+async function fetchAirNow(lat, lon) {
+  const key = process.env.AIRNOW_API_KEY;
+  if (!key) return null;
+
+  try {
+    const url = `https://www.airnowapi.org/aq/observation/latLong/current/?format=application/json&latitude=${lat}&longitude=${lon}&distance=25&API_KEY=${key}`;
+    const r = await fetch(url);
+    if (!r.ok) return null;
+    const j = await r.json();
+    if (Array.isArray(j) && j[0]?.AQI != null) {
+      return parseFloat(j[0].AQI);
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchOpenAQ(lat, lon) {
+  // Query nearest PM2.5 station and compute AQI
+  const url = `https://api.openaq.org/v2/latest?coordinates=${lat},${lon}&radius=30000&parameter=pm25&limit=1`;
+
+  try {
+    const r = await fetch(url);
+    if (!r.ok) return null;
+    const j = await r.json();
+
+    const pm = j?.results?.[0]?.measurements?.find((m) => m.parameter === "pm25")?.value;
+    if (pm == null) return null;
+
+    // Basic PM2.5 → AQI conversion (EPA formula)
+    // AQI breakpoints for PM2.5 µg/m³
+    if (pm <= 12.0) return Math.round((50 / 12) * pm);
+    if (pm <= 35.4) return Math.round(((100 - 51) / (35.4 - 12.1)) * (pm - 12.1) + 51);
+    if (pm <= 55.4) return Math.round(((150 - 101) / (55.4 - 35.5)) * (pm - 35.5) + 101);
+    if (pm <= 150.4) return Math.round(((200 - 151) / (150.4 - 55.5)) * (pm - 55.5) + 151);
+    if (pm <= 250.4) return Math.round(((300 - 201) / (250.4 - 150.5)) * (pm - 150.5) + 201);
+    if (pm <= 350.4) return Math.round(((400 - 301) / (350.4 - 250.5)) * (pm - 250.5) + 301);
+    return 500; // hazy hellscape
+  } catch {
+    return null;
+  }
 }
 
 export default async function handler(req, res) {
@@ -23,28 +66,25 @@ export default async function handler(req, res) {
   if (!lat || !lon) return res.status(400).json({ error: "Missing lat/lon" });
 
   try {
-    let aqi = null;
+    let aqi = await fetchAirNow(lat, lon);
 
-    if (process.env.AIRNOW_API_KEY) {
-      const url = `https://www.airnowapi.org/aq/observation/latLong/current/?format=application/json&latitude=${lat}&longitude=${lon}&distance=25&API_KEY=${process.env.AIRNOW_API_KEY}`;
-      const r = await fetch(url);
-      if (r.ok) {
-        const j = await r.json();
-        if (Array.isArray(j) && j.length > 0 && j[0].AQI != null) {
-          aqi = parseFloat(j[0].AQI);
-        }
-      }
+    if (!aqi) {
+      // Secondary source
+      aqi = await fetchOpenAQ(lat, lon);
     }
 
-    // If no AirNow return, fallback to category only (clear skies assumed)
-    const cat = getCategory(aqi ?? 20);
+    // If still nothing, assume clear day baseline
+    if (!aqi) aqi = 20;
 
     return res.status(200).json({
       aqi,
-      category: cat,
+      category: getCategory(aqi),
     });
   } catch (err) {
     console.error("AQI fetch error:", err);
-    return res.status(500).json({ error: "AQI unavailable" });
+    return res.status(200).json({
+      aqi: null,
+      category: "Unknown",
+    });
   }
 }

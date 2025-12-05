@@ -14,7 +14,10 @@ export default function handler(req, res) {
   try {
     const chunks = [];
 
-    req.on("data", (chunk) => chunks.push(chunk));
+    req.on("data", (chunk) => {
+      chunks.push(chunk);
+    });
+
     req.on("end", async () => {
       try {
         const fileBuffer = Buffer.concat(chunks);
@@ -35,7 +38,11 @@ export default function handler(req, res) {
           expires: "03-09-2491",
         });
 
-        return res.status(200).json({ url: signedUrl });
+        // Return both keys for safety, but the UI uses imageUrl
+        return res.status(200).json({
+          imageUrl: signedUrl,
+          url: signedUrl,
+        });
       } catch (err) {
         console.error("UPLOAD SAVE ERROR:", err);
         return res.status(500).json({ error: "Upload failed" });
@@ -51,7 +58,7 @@ export default function handler(req, res) {
   } catch (err) {
     console.error("UPLOAD HANDLER ERROR:", err);
     if (!res.headersSent) {
-      res.status(500).json({ error: "Internal server error" });
+      return res.status(500).json({ error: "Internal server error" });
     }
   }
 }
