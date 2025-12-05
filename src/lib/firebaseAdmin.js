@@ -1,21 +1,15 @@
-// /src/lib/firebaseAdmin.js
-import { initializeApp, cert, getApps } from "firebase-admin/app";
-import { getStorage } from "firebase-admin/storage";
+import admin from "firebase-admin";
 
-const projectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
-const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
-const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n");
-const bucketUrl = process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET;
-
-if (!getApps().length) {
-  initializeApp({
-    credential: cert({
-      projectId,
-      clientEmail,
-      privateKey,
+if (!admin.apps.length) {
+  admin.initializeApp({
+    credential: admin.credential.cert({
+      projectId: process.env.FIREBASE_PROJECT_ID,
+      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+      privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n"),
     }),
-    storageBucket: bucketUrl,
+    storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
   });
 }
 
-export const storage = getStorage().bucket();
+export const storage = admin.storage().bucket();
+export const firestore = admin.firestore();
