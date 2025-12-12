@@ -1,159 +1,203 @@
 /**
- * River Data API (Resilient Edition)
+ * River Data API (Ohio River)
  *
- * Improvements:
- * - USGS request timeout (10s)
- * - Retry logic (max 2)
- * - Local in-memory cache (10 min per site)
- * - NOAA AHPS fallback for observed + flood stage + forecasts
- * - Graceful degradation instead of 500 errors
+ * - Fetches observed level & history from USGS
+ * - Tries flood stage from NOAA AHPS first, then USGS metadata
+ * - Builds a simple 5-day prediction from recent trend
+ * - Computes:
+ *    • trend / trendDelta
+ *    • floodPercent
+ *    • hazardCode 0–3  (0 = Normal, 1 = Elevated, 2 = Near Flood, 3 = Flooding)
+ *    • hazardLabel (human-readable)
  */
 
-const CACHE_DURATION = 10 * 60 * 1000; // 10 mins
-const cache = new Map();
-
-// NOAA AHPS station metadata lookup for flood stage + forecast
-async function fetchNoaa(site) {
-  // Many USGS site codes map directly to NOAA
-  const url = `https://api.water.noaa.gov/v2/stations/${site}`;
+async function fetchNOAAFloodStage(site) {
   try {
-    const res = await fetch(url, { timeout: 10000 });
+    const url = `https://api.water.noaa.gov/nwps/ahps/station/${site}`;
+    const res = await fetch(url);
     if (!res.ok) return null;
-    const j = await res.json();
-    return {
-      name: j.name || "Unknown",
-      floodStage: j.flood?.action || null,
-      forecast: Array.isArray(j.forecast) ? j.forecast.map((f) => ({
-        t: f.validTime,
-        v: f.value
-      })) : [],
-    };
+    const json = await res.json();
+    const stage = Number(json?.floodStage);
+    return Number.isFinite(stage) && stage > 0 ? stage : null;
   } catch {
     return null;
   }
 }
 
-async function fetchWithTimeout(url) {
-  const controller = new AbortController();
-  const id = setTimeout(() => controller.abort(), 10000);
+function analyzeConditions(observed, floodStage, history, prediction) {
+  /* ---------- TREND (rising / falling / steady) ---------- */
+  let trend = "unknown";
+  let trendDelta = null;
 
-  try {
-    const r = await fetch(url, { signal: controller.signal });
-    clearTimeout(id);
-    return await r.json();
-  } catch {
-    clearTimeout(id);
-    throw new Error("timeout");
+  if (Array.isArray(history) && history.length >= 3) {
+    const last3 = history.slice(-3);
+    const first = last3[0]?.v;
+    const last = last3[last3.length - 1]?.v;
+
+    if (typeof first === "number" && typeof last === "number") {
+      trendDelta = +(last - first).toFixed(2);
+
+      if (trendDelta > 0.25) trend = "rising";
+      else if (trendDelta < -0.25) trend = "falling";
+      else trend = "steady";
+    }
   }
-}
 
-async function fetchUSGS(site, retries = 2) {
-  const url = `https://waterservices.usgs.gov/nwis/iv/?format=json&sites=${site}&parameterCd=00065`;
-
-  try {
-    return await fetchWithTimeout(url);
-  } catch (err) {
-    if (retries > 0) return fetchUSGS(site, retries - 1);
-    return null;
+  /* ---------- FLOOD PERCENT ---------- */
+  let floodPercent = null;
+  if (
+    typeof observed === "number" &&
+    typeof floodStage === "number" &&
+    floodStage > 0
+  ) {
+    floodPercent = +((observed / floodStage) * 100).toFixed(0);
   }
+
+  /* ---------- HAZARD CODE (0–3) ---------- */
+  // 0 = Normal (well below flood stage)
+  // 1 = Elevated (>= 80% of flood stage)
+  // 2 = Near Flood (>= 95% of flood stage but below)
+  // 3 = Flooding (>= flood stage)
+  let hazardCode = 0;
+  let hazardLabel = "Normal";
+
+  if (
+    typeof observed !== "number" ||
+    typeof floodStage !== "number" ||
+    !(floodStage > 0)
+  ) {
+    hazardCode = 0;
+    hazardLabel = "Normal (no flood stage set)";
+  } else {
+    const ratio = observed / floodStage;
+
+    if (ratio >= 1) {
+      hazardCode = 3;
+      hazardLabel = "Flooding (at or above flood stage)";
+    } else if (ratio >= 0.95) {
+      hazardCode = 2;
+      hazardLabel = "Near Flood (within 5% of flood stage)";
+    } else if (ratio >= 0.8) {
+      hazardCode = 1;
+      hazardLabel = "Elevated (over 80% of flood stage)";
+    } else {
+      hazardCode = 0;
+      hazardLabel = "Normal";
+    }
+  }
+
+  return {
+    trend,
+    trendDelta,
+    floodPercent,
+    hazardCode,
+    hazardLabel,
+  };
 }
 
 export default async function handler(req, res) {
   const { site } = req.query;
   if (!site) return res.status(400).json({ error: "Missing site" });
 
-  // Serve cached response if recent
-  const cached = cache.get(site);
-  if (cached && Date.now() - cached.t < CACHE_DURATION) {
-    return res.status(200).json(cached.data);
-  }
-
   try {
-    // 1️⃣ Fetch from USGS first
-    const usgs = await fetchUSGS(site);
+    /* ---------------------------------------------
+       1) OBSERVED LEVEL (latest)
+    --------------------------------------------- */
+    const ivURL = `https://waterservices.usgs.gov/nwis/iv/?format=json&sites=${site}&parameterCd=00065`;
+    const ivRes = await fetch(ivURL);
+    const ivJson = await ivRes.json();
 
     let observed = null;
     let time = null;
-    let history = [];
     let location = "Unknown";
-    let floodStage = null;
-    let prediction = [];
 
-    if (usgs?.value?.timeSeries?.[0]) {
-      const ts = usgs.value.timeSeries[0];
-      location = ts.sourceInfo?.siteName || "Unnamed Station";
+    try {
+      const ts = ivJson.value?.timeSeries?.[0];
+      const val = ts?.values?.[0]?.value?.[0];
 
-      try {
-        const val = ts.values?.[0]?.value?.[0];
-        observed = val ? parseFloat(val.value) : null;
-        time = val?.dateTime || null;
-      } catch {}
-
-      // 7-day history
-      try {
-        const histUrl = `https://waterservices.usgs.gov/nwis/iv/?format=json&sites=${site}&parameterCd=00065&period=P7D`;
-        const hist = await fetchWithTimeout(histUrl);
-
-        const pts = hist.value?.timeSeries?.[0]?.values?.[0]?.value ?? [];
-        history = pts.map((p) => ({
-          t: p.dateTime,
-          v: parseFloat(p.value),
-        }));
-      } catch {}
+      observed = val ? Number(val.value) : null;
+      time = val?.dateTime || null;
+      location = ts?.sourceInfo?.siteName || "Unnamed Station";
+    } catch (err) {
+      console.warn("USGS observed parse error", err);
     }
 
-    // 2️⃣ NOAA fallback if USGS fails or lacks prediction/flood metadata
-    const noaa = await fetchNoaa(site);
+    /* ---------------------------------------------
+       2) FLOOD STAGE: NOAA AHPS, then USGS notes
+    --------------------------------------------- */
+    let floodStage = await fetchNOAAFloodStage(site);
 
-    if (noaa) {
-      if (!location || location === "Unknown") location = noaa.name;
-      if (!observed && noaa?.observed?.value) observed = noaa.observed.value;
-      if (!floodStage && noaa.floodStage) floodStage = noaa.floodStage;
-
-      if (Array.isArray(noaa.forecast) && noaa.forecast.length > 0) {
-        prediction = noaa.forecast.map((p) => ({
-          t: p.t,
-          v: parseFloat(p.v),
-        }));
+    if (floodStage == null) {
+      try {
+        const notes = ivJson.value?.timeSeries?.[0]?.variable?.note;
+        const match =
+          notes && JSON.stringify(notes).match(/flood.*?(\d+(\.\d+)?)/i);
+        if (match) floodStage = Number(match[1]);
+      } catch {
+        // leave null
       }
     }
 
-    // 3️⃣ If no NOAA forecast, compute trend prediction
-    if (!prediction.length && history.length >= 3) {
-      const last = history.slice(-3).map((p) => p.v);
-      const slope = (last[2] - last[0]) / 2;
-      const base = last[2];
+    /* ---------------------------------------------
+       3) 7-DAY HISTORY
+    --------------------------------------------- */
+    const histURL = `https://waterservices.usgs.gov/nwis/iv/?format=json&sites=${site}&parameterCd=00065&period=P7D`;
+    const histRes = await fetch(histURL);
+    const histJson = await histRes.json();
+
+    let history = [];
+    try {
+      const pts =
+        histJson.value?.timeSeries?.[0]?.values?.[0]?.value ?? [];
+      history = pts.map((p) => ({
+        t: p.dateTime,
+        v: Number(p.value),
+      }));
+    } catch {
+      history = [];
+    }
+
+    /* ---------------------------------------------
+       4) SIMPLE 5-DAY PREDICTION
+       (keeps *something* on the forecast chart)
+    --------------------------------------------- */
+    let prediction = [];
+    if (history.length >= 3) {
+      const last = history[history.length - 1].v;
+      const prev = history[history.length - 3].v;
+      const slope = (last - prev) / 3; // change per step
 
       prediction = Array.from({ length: 5 }).map((_, i) => ({
-        t: new Date(Date.now() + i * 86400000).toISOString(),
-        v: parseFloat((base + slope * i).toFixed(2)),
+        t: new Date(Date.now() + i * 24 * 60 * 60 * 1000).toISOString(),
+        v: +(last + slope * i).toFixed(2),
       }));
     }
 
-    const data = {
-      location,
-      unit: "ft",
+    /* ---------------------------------------------
+       5) DERIVED METRICS (trend, hazardCode, etc.)
+    --------------------------------------------- */
+    const derived = analyzeConditions(
       observed,
       floodStage,
+      history,
+      prediction
+    );
+
+    /* ---------------------------------------------
+       6) RESPONSE
+    --------------------------------------------- */
+    return res.status(200).json({
+      location,
+      observed,
+      floodStage,
+      unit: "ft",
       time,
       history,
       prediction,
-    };
-
-    // Cache the result
-    cache.set(site, { t: Date.now(), data });
-
-    return res.status(200).json(data);
+      ...derived, // trend, trendDelta, floodPercent, hazardCode, hazardLabel
+    });
   } catch (err) {
     console.error("River API failure:", err);
-    return res.status(200).json({
-      location: "Unavailable",
-      observed: null,
-      floodStage: null,
-      unit: "ft",
-      time: null,
-      history: [],
-      prediction: [],
-    });
+    return res.status(500).json({ error: "Internal Server Error" });
   }
 }
