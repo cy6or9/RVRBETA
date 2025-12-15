@@ -32,7 +32,7 @@ const stations = [
   { id: "03304300", name: "Newburgh L&D, IN", lat: 37.93, lon: -87.38 },
   { id: "03322000", name: "Evansville, IN", lat: 37.97, lon: -87.57 },
   { id: "03322190", name: "Henderson, KY", lat: 37.84, lon: -87.58 },
-  { id: "03322420", name: "J.T. Myers L&D, KY", lat: 37.78, lon: -87.98 },
+  { id: "03322420", name: "J.T. Myers L&D, KY", lat: 37.78, lon: -87.98, ahps: "UNVK2" },
   { id: "03381700", name: "Shawneetown, IL", lat: 37.69, lon: -88.14 },
   { id: "03384500", name: "Golconda, IL", lat: 37.36, lon: -88.48 },
   { id: "03399800", name: "Smithland L&D, KY", lat: 37.15, lon: -88.44 },
@@ -40,7 +40,9 @@ const stations = [
   { id: "07022000", name: "Cairo, IL (Mouth)", lat: 36.99, lon: -89.18 },
 ];
 
-/* UTILITIES */
+/* ---------------------------------------------------
+   UTILITIES
+--------------------------------------------------- */
 const formatLocal = (ts) =>
   ts
     ? new Date(ts).toLocaleString("en-US", {
@@ -53,10 +55,191 @@ const formatLocal = (ts) =>
       })
     : "";
 
+const formatDayShort = (ts) =>
+  ts
+    ? new Date(ts).toLocaleDateString("en-US", {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+        timeZone: "America/Chicago",
+      })
+    : "";
+
+/* ---------------------------------------------------
+   DATE HELPERS (Chicago day bucketing)
+--------------------------------------------------- */
+function chicagoDayKey(ts) {
+  if (!ts) return null;
+  const d = new Date(ts);
+  if (isNaN(d.getTime())) return null;
+
+  // en-CA gives YYYY-MM-DD
+  const fmt = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Chicago",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  return fmt.format(d);
+}
+
+function toNoonChicagoISO(dayKey) {
+  // 18:00Z ~ 12:00 CST / 13:00 CDT
+  return `${dayKey}T18:00:00Z`;
+}
+
+/* ---------------------------------------------------
+   DAILY HIGH HISTORY (PAST DATA) - always 7 days
+--------------------------------------------------- */
+function dailyHighHistory(history, days = 7) {
+  if (!Array.isArray(history) || history.length === 0) return null;
+
+  const byDay = new Map();
+
+  history.forEach((p) => {
+    const d = new Date(p.t);
+    if (isNaN(d.getTime())) return;
+
+    // Use local day boundary (Chicago time)
+    const dayKey = new Date(
+      d.toLocaleDateString("en-US", { timeZone: "America/Chicago" })
+    )
+      .toISOString()
+      .slice(0, 10);
+
+    const v = Number(p.v);
+    if (!isFinite(v)) return;
+
+    const prev = byDay.get(dayKey);
+    if (prev == null || v > prev) byDay.set(dayKey, v);
+  });
+
+  return Array.from(byDay.entries())
+    .sort(([a], [b]) => new Date(a) - new Date(b))
+    .slice(-days)
+    .map(([day, v]) => ({
+      // Noon local prevents date rollover issues
+      t: `${day}T18:00:00Z`,
+      v: +v.toFixed(2),
+    }));
+}
+
+/* ---------------------------------------------------
+   FORECAST NORMALIZER (NWPS-only, “bulletproof”)
+   Accepts many shapes and returns 7 daily-high points.
+--------------------------------------------------- */
+function normalizeForecastSeries(payload, days = 7) {
+  // Allow passing either the raw array or the full API payload
+  const candidates = [];
+
+  // If caller passed array directly
+  if (Array.isArray(payload)) candidates.push(payload);
+
+  // If caller passed the API JSON object
+  if (payload && typeof payload === "object") {
+    // Common field names you might return from /api/river-data
+    candidates.push(payload.prediction);
+    candidates.push(payload.forecast);
+    candidates.push(payload.forecast7d);
+    candidates.push(payload.forecastDaily);
+    candidates.push(payload.nwpsForecast);
+    candidates.push(payload.nwps);
+    candidates.push(payload.series);
+    candidates.push(payload.data?.forecast);
+    candidates.push(payload.data?.prediction);
+
+    // Some NOAA-ish nestings people use
+    candidates.push(payload.nwps?.forecast);
+    candidates.push(payload.nwps?.data);
+    candidates.push(payload.nwps?.points);
+    candidates.push(payload.nwps?.timeseries);
+  }
+
+  // Pick first usable array
+  const raw =
+    candidates.find((arr) => Array.isArray(arr) && arr.length > 0) || null;
+  if (!raw) return null;
+
+  // Normalize point formats into {t, v}
+  const points = [];
+  for (const p of raw) {
+    if (!p) continue;
+
+    // timestamps
+    const t =
+      p.t ??
+      p.time ??
+      p.dateTime ??
+      p.datetime ??
+      p.validTime ??
+      p.validtime ??
+      p.x ??
+      null;
+
+    // values
+    const vRaw =
+      p.v ??
+      p.value ??
+      p.stage ??
+      p.y ??
+      null;
+
+    const v = Number(vRaw);
+    if (!t || !Number.isFinite(v)) continue;
+
+    const tt = new Date(t);
+    if (isNaN(tt.getTime())) continue;
+
+    points.push({ t: tt.toISOString(), v });
+  }
+
+  if (points.length === 0) return null;
+
+  // Sort ascending
+  points.sort((a, b) => new Date(a.t).getTime() - new Date(b.t).getTime());
+
+  // Keep from “now-ish” forward, but allow a little backfill
+  const now = Date.now();
+  const filtered = points.filter((p) => {
+    const tt = new Date(p.t).getTime();
+    return Number.isFinite(tt) && tt >= now - 12 * 60 * 60 * 1000; // last 12h and forward
+  });
+
+  const usable = filtered.length ? filtered : points;
+
+  // Bucket by Chicago day, take max per day (daily high)
+  const byDay = new Map();
+  for (const p of usable) {
+    const day = chicagoDayKey(p.t);
+    if (!day) continue;
+    const prev = byDay.get(day);
+    if (prev == null || p.v > prev) byDay.set(day, p.v);
+  }
+
+  const daily = Array.from(byDay.entries())
+    .map(([day, v]) => ({ day, v }))
+    .sort((a, b) => a.day.localeCompare(b.day));
+
+  // Take the next N days (starting at today Chicago)
+  const todayKey = chicagoDayKey(new Date().toISOString());
+  const future = todayKey
+    ? daily.filter((d) => d.day >= todayKey)
+    : daily;
+
+  const sliced = (future.length ? future : daily).slice(0, days);
+
+  const out = sliced.map((d) => ({
+    t: toNoonChicagoISO(d.day),
+    v: +Number(d.v).toFixed(2),
+  }));
+
+  return out.length ? out : null;
+}
+
 const distKm = (lat1, lon1, lat2, lon2) => {
   const R = 6371;
   const dLat = ((lat2 - lat1) * Math.PI) / 180;
-  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const dLon = ((lat2 - lon1) * Math.PI) / 180;
   const a =
     Math.sin(dLat / 2) ** 2 +
     Math.cos((lat1 * Math.PI) / 180) *
@@ -94,7 +277,7 @@ const AQI_GRADIENT =
   "linear-gradient(to right, #3A6F3A, #9A8B2E, #A66B2C, #8B3A46, #613A8B, #7A2A3A)";
 
 /* ---------------------------------------------------
-   CHART COMPONENT (unchanged)
+   CHART COMPONENT (kept intact + adds optional day marks/labels)
 --------------------------------------------------- */
 function Chart({
   data,
@@ -103,6 +286,9 @@ function Chart({
   width = 240,
   height = 110,
   color = "#ffffff",
+  showDayMarks = false,
+  showPointLabels = false,
+  labelColor = "#00ffff",
 }) {
   if (!data || !Array.isArray(data) || data.length === 0) {
     return (
@@ -120,6 +306,7 @@ function Chart({
     .map((d) => ({
       t: new Date(d.t).getTime(),
       v: typeof d.v === "number" ? d.v : Number(d.v),
+      rawT: d.t,
     }))
     .filter((p) => isFinite(p.t) && isFinite(p.v));
 
@@ -153,6 +340,9 @@ function Chart({
   const floodY = floodStage != null ? scaleY(floodStage) : null;
   const midV = (minV + maxV) / 2;
 
+  // Avoid clutter: only label when series is small (forecast usually is)
+  const canLabel = pts.length <= 10;
+
   return (
     <svg
       width={width}
@@ -160,6 +350,26 @@ function Chart({
       className="bg-black/20 rounded border border-white/10"
       style={{ minWidth: width }}
     >
+      {/* day marks (vertical ticks) */}
+      {showDayMarks &&
+        canLabel &&
+        pts.map((p, idx) => {
+          const x = scaleX(p.t);
+          return (
+            <line
+              key={`tick-${idx}`}
+              x1={x}
+              y1={pad - 2}
+              x2={x}
+              y2={height - pad + 6}
+              stroke={labelColor}
+              strokeOpacity="0.35"
+              strokeDasharray="2 4"
+            />
+          );
+        })}
+
+      {/* flood stage line */}
       {floodY != null && (
         <line
           x1={pad}
@@ -171,8 +381,52 @@ function Chart({
         />
       )}
 
+      {/* main path */}
       <path d={pathD} fill="none" stroke={color} strokeWidth="2" />
 
+      {/* point dots + labels */}
+      {showPointLabels &&
+        canLabel &&
+        pts.map((p, idx) => {
+          const x = scaleX(p.t);
+          const y = scaleY(p.v);
+          const day = formatDayShort(p.rawT);
+          const val = `${p.v.toFixed(2)}${unit ? ` ${unit}` : ""}`;
+          
+          // Skip day labels for every other point when crowded (>5 points)
+          const showDayLabel = pts.length <= 5 || idx % 2 === 0;
+
+          return (
+            <g key={`pt-${idx}`}>
+              <circle cx={x} cy={y} r="2.6" fill={labelColor} />
+              {/* value label */}
+              <text
+                x={x}
+                y={Math.max(10, y - 6)}
+                fontSize="7"
+                textAnchor="middle"
+                fill={labelColor}
+              >
+                {val}
+              </text>
+              {/* day label (skip every other when crowded) */}
+              {showDayLabel && (
+                <text
+                  x={x}
+                  y={height - 6}
+                  fontSize="7"
+                  textAnchor="middle"
+                  fill={labelColor}
+                  opacity="0.9"
+                >
+                  {day}
+                </text>
+              )}
+            </g>
+          );
+        })}
+
+      {/* axis labels */}
       <text x={pad} y={pad + 6} fontSize="8" fill="#aaa">
         {maxV.toFixed(1)}
       </text>
@@ -202,20 +456,23 @@ function RiverHazardBar({ hazardCode }) {
     { code: 3, label: "Flooding", color: HAZARD_LEVELS[3].color },
   ];
 
-  // Map code 0..3 => 0..100%
   const pct = (code / 3) * 100;
 
   return (
     <div className="w-full px-4 pt-3">
       <div className="flex items-center justify-between text-[10px] text-white/70 mb-1">
-       <span className="font-semibold text-white/80">River Danger Level</span> 
+        <span className="font-semibold text-white/80">River Danger Level</span>
         <span>{HAZARD_LEVELS[code]?.label ?? "Normal"}</span>
       </div>
 
       <div className="relative h-2 w-full overflow-hidden rounded-full border border-white/20">
         <div className="flex h-full w-full">
           {stops.map((s) => (
-            <div key={s.code} className="h-full flex-1" style={{ background: s.color }} />
+            <div
+              key={s.code}
+              className="h-full flex-1"
+              style={{ background: s.color }}
+            />
           ))}
         </div>
 
@@ -229,9 +486,7 @@ function RiverHazardBar({ hazardCode }) {
 
       <div className="mt-1 flex items-center justify-between text-[10px] text-white/60">
         {stops.map((s) => (
-          <span key={s.code}>
-            {s.code} {s.label}
-          </span>
+          <span key={s.code}>{s.label}</span>
         ))}
       </div>
     </div>
@@ -240,11 +495,10 @@ function RiverHazardBar({ hazardCode }) {
 
 /* ---------------------------------------------------
    RIVER DANGER + TREND INDICATOR
-   (hazardCode 0–3 from API, trend from history)
+   - Fixes "↑ steady" by using a right-arrow base and rotating it.
+   - Colors the "Code X" text to match hazard level color.
 --------------------------------------------------- */
 function RiverLevelIndicator({ history, hazardCode }) {
-  // More stable trend: compare last vs ~6 hours ago (or last 6 points),
-  // instead of a fixed “-3” index that can be noisy/flat.
   let trend = "steady";
   let rotation = 0;
 
@@ -256,15 +510,18 @@ function RiverLevelIndicator({ history, hazardCode }) {
 
     if (clean.length >= 6) {
       const last = clean[clean.length - 1]?.v;
-      const prev = clean[clean.length - 6]?.v; // “older” point
+      const prev = clean[clean.length - 6]?.v;
       const diff = last - prev;
 
       if (diff > 0.25) {
         trend = "rising";
-        rotation = -45;
+        rotation = -45; // up-right
       } else if (diff < -0.25) {
         trend = "falling";
-        rotation = 45;
+        rotation = 45; // down-right
+      } else {
+        trend = "steady";
+        rotation = 0; // right
       }
     }
   }
@@ -275,13 +532,14 @@ function RiverLevelIndicator({ history, hazardCode }) {
       : 0;
 
   const label = HAZARD_LEVELS[safeCode]?.label || "Normal";
+  const codeColor = HAZARD_LEVELS[safeCode]?.color || "#ffffff";
 
   return (
     <div className="flex flex-col gap-1 text-xs mt-2">
       <span className="opacity-70">River Danger Level</span>
       <div className="flex items-center justify-between gap-3">
         <span className="text-sm font-semibold">
-          Code {safeCode} — {label}
+          <span style={{ color: codeColor }}>Code {safeCode}</span> — {label}
         </span>
 
         <span className="inline-flex items-center gap-2">
@@ -291,7 +549,7 @@ function RiverLevelIndicator({ history, hazardCode }) {
             aria-label={`Trend: ${trend}`}
             title={`Trend: ${trend}`}
           >
-            ↑
+            →
           </span>
           <span className="capitalize">{trend}</span>
         </span>
@@ -302,9 +560,14 @@ function RiverLevelIndicator({ history, hazardCode }) {
 
 /* ---------------------------------------------------
    WIND COMPASS
+   - Rotated 180° so arrow indicates where wind is GOING (flow),
+     not where it is coming FROM.
 --------------------------------------------------- */
 function WindCompass({ direction, degrees }) {
   if (degrees == null || isNaN(degrees)) return null;
+
+  const flowDeg = ((Number(degrees) + 180) % 360 + 360) % 360;
+
   return (
     <div className="flex flex-col items-center justify-center">
       <div className="relative w-16 h-16 rounded-full border border-white/40 flex items-center justify-center text-[9px] text-white/70">
@@ -314,12 +577,13 @@ function WindCompass({ direction, degrees }) {
         <span className="absolute right-0 top-1/2 -translate-y-1/2">E</span>
         <div
           className="absolute left-1/2 bottom-1/2 w-[2px] h-7 bg-cyan-400 rounded-full origin-bottom -translate-x-1/2"
-          style={{ transform: `rotate(${degrees}deg)` }}
+          style={{ transform: `rotate(${flowDeg}deg)` }}
         />
       </div>
       <p className="text-xs mt-1">
         {direction} ({degrees.toFixed(0)}°)
       </p>
+      <p className="text-[10px] opacity-70 -mt-1">Flow: {flowDeg.toFixed(0)}°</p>
     </div>
   );
 }
@@ -362,8 +626,7 @@ function AirQualityScale({ aqi }) {
    MAIN COMPONENT
 --------------------------------------------------- */
 export default function RiverConditions() {
-  const defaultStation =
-    stations.find((s) => s.id === "03322420") ?? stations[0];
+  const defaultStation = stations.find((s) => s.id === "03322420") ?? stations[0];
 
   const [selected, setSelected] = useState(defaultStation);
 
@@ -388,33 +651,51 @@ export default function RiverConditions() {
 
   /* -------------------- DATA LOADERS -------------------- */
 
-  async function loadRiver(id, { silent = false } = {}) {
+  async function loadRiver(stationOrId, { silent = false } = {}) {
     const reqId = ++riverReqIdRef.current;
 
+    const st =
+      typeof stationOrId === "object" && stationOrId
+        ? stationOrId
+        : stations.find((s) => s.id === stationOrId) || null;
+
+    const site = typeof stationOrId === "string" ? stationOrId : stationOrId?.id;
+
+    const ahps =
+      typeof stationOrId === "object" && stationOrId ? stationOrId.ahps : st?.ahps ?? null;
+
+    const lat = st?.lat;
+    const lon = st?.lon;
+
+    if (!site) return;
+
     try {
-      // NOTE: keep cache-busting but don’t punish the UI if a refresh fails
-      const res = await fetch(`/api/river-data?site=${id}&_=${Date.now()}`);
+      // IMPORTANT:
+      // Pass lat/lon so the API can auto-discover nearest AHPS/NWPS gauge
+      // for stations that don't have explicit .ahps mapping.
+      const qs = new URLSearchParams({ site, _: String(Date.now()) });
+      if (ahps) qs.set("ahps", ahps);
+      if (lat != null) qs.set("lat", String(lat));
+      if (lon != null) qs.set("lon", String(lon));
+
+      const res = await fetch(`/api/river-data?${qs.toString()}`);
       if (!res.ok) throw new Error("River API error");
       const json = await res.json();
 
-      // If user switched stations mid-request, ignore old response
       if (reqId !== riverReqIdRef.current) return;
 
-      // Basic sanity checks
       const okObserved = typeof json?.observed === "number" && isFinite(json.observed);
-      const okHistory =
-        Array.isArray(json?.history) && json.history.length > 0;
+      const okHistory = Array.isArray(json?.history) && json.history.length > 0;
+
       if (okObserved || okHistory) {
         lastGoodRiverRef.current = json;
         setData(json);
       } else if (!silent && lastGoodRiverRef.current) {
-        // keep old
         setData(lastGoodRiverRef.current);
       } else if (!silent) {
-        setData(json); // show whatever came back
+        setData(json);
       }
     } catch {
-      // Do NOT clear data on refresh failure; keep the last good view
       if (lastGoodRiverRef.current) setData(lastGoodRiverRef.current);
     }
   }
@@ -458,20 +739,17 @@ export default function RiverConditions() {
 
   /* -------------------- EFFECTS -------------------- */
 
-  // Load river when station changes
   useEffect(() => {
-    loadRiver(selected.id);
+    loadRiver(selected);
   }, [selected]);
 
-  // Soft refresh river data every 60s (prevents “stale then blank” behavior)
   useEffect(() => {
     const t = setInterval(() => {
-      loadRiver(selected.id, { silent: true });
+      loadRiver(selected, { silent: true });
     }, 60_000);
     return () => clearInterval(t);
   }, [selected]);
 
-  // Weather / AQI for station coords
   useEffect(() => {
     loadWeather(wxLoc.lat, wxLoc.lon);
     loadAQI(wxLoc.lat, wxLoc.lon);
@@ -517,16 +795,36 @@ export default function RiverConditions() {
       : HAZARD_LEVELS[hazardCode]?.label ?? "Normal";
 
   const precip = weather?.precip ?? 0;
-  const precipIcon =
-    precip >= 80 ? "⚡️" : precip >= 50 ? "🌧" : precip >= 20 ? "☁️" : "🌤";
+  const precipIcon = precip >= 80 ? "⚡️" : precip >= 50 ? "🌧" : precip >= 20 ? "☁️" : "🌤";
 
   const mapSrc = `https://www.marinetraffic.com/en/ais/embed/map?zoom=9&centerx=${mapCenter.lon}&centery=${mapCenter.lat}&layer_all=1`;
 
-  // Prediction should be a 5-day series; if the API gives something else, we still render if non-empty.
-  const predictionSeries =
-    Array.isArray(data?.prediction) && data.prediction.length > 0
-      ? data.prediction
-      : null;
+  // ✅ Past 7 days (daily highs)
+  const past7Series = dailyHighHistory(data?.history, 7);
+
+  // ✅ Forecast 7 days (daily highs), tolerate many API formats
+  const predictionSeries = normalizeForecastSeries(data, 7);
+
+  // “Official NOAA Forecast” badge when NWPS is used
+  const forecastSource = String(data?.forecastSource ?? data?.forecast_source ?? "").toLowerCase();
+  const forecastType = String(data?.forecastType ?? data?.forecast_type ?? "").toLowerCase();
+  const isNWPS = forecastSource.includes("nwps") || forecastType.includes("official");
+
+  // Issuance time (if your API provides it)
+  const issuedAt =
+    data?.forecastIssuedAt ??
+    data?.forecastIssued ??
+    data?.issuedAt ??
+    data?.issuanceTime ??
+    data?.forecastMeta?.issuedAt ??
+    null;
+
+  // Confidence flags (if your API provides it)
+  const confidence =
+    data?.forecastConfidence ??
+    data?.confidence ??
+    data?.forecastMeta?.confidence ??
+    null;
 
   /* -------------------- RENDER ---------------------- */
 
@@ -536,12 +834,11 @@ export default function RiverConditions() {
 
       {/* TOP BAR */}
       <section className="sticky top-0 z-50 shadow-md bg-slate-900/95 backdrop-blur">
-        {/* Horizontal hazard bar inside the top info bar */}
         <RiverHazardBar hazardCode={hazardCode} />
 
         <div className="max-w-6xl mx-auto px-4 pb-3">
           <div className="flex flex-col lg:flex-row items-stretch justify-between gap-6">
-            {/* LEFT: selector + text */}
+            {/* LEFT */}
             <div className="flex-1 min-w-[280px]">
               <div className="flex items-center gap-2 mt-2">
                 <label className="text-sm">Station:</label>
@@ -565,65 +862,93 @@ export default function RiverConditions() {
               </div>
 
               <div className="mt-3">
-                <p className="text-sm font-semibold uppercase">
-                  {data?.location ?? selected.name}
-                </p>
+                <p className="text-sm font-semibold uppercase">{data?.location ?? selected.name}</p>
 
                 <p className="text-sm">
-                  {typeof data?.observed === "number"
-                    ? `${data.observed.toFixed(2)} ft`
-                    : "Loading…"}
+                  {typeof data?.observed === "number" ? `${data.observed.toFixed(2)} ft` : "Loading…"}
                   {data?.time ? ` at ${formatLocal(data.time)}` : ""}
                 </p>
 
-                {/* Single clean status line (no repetition) */}
+                <div className="mt-2 flex flex-col items-center text-center">
                 <p className="text-xs mt-1 text-white/80">
-                  Flood Stage:{" "}
-                  {hasFloodStage ? `${Number(data.floodStage).toFixed(1)} ft` : "N/A"}
+                  Flood Stage: {hasFloodStage ? `${Number(data.floodStage).toFixed(1)} ft` : "N/A"}
                 </p>
 
                 <RiverLevelIndicator history={data?.history} hazardCode={hazardCode} />
               </div>
-            </div>
+                {/* ✅ NWPS badge + issuance + confidence (only if present) */}
+                {isNWPS && (
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <span className="inline-flex items-center gap-2 px-2 py-1 rounded-full text-[10px] font-semibold bg-cyan-600/20 border border-cyan-400/30 text-cyan-200">
+                      ✅ Official NOAA Forecast
+                    </span>
 
-            {/* RIGHT: graphs */}
-            <div className="flex-shrink-0">
-              <div className="flex flex-col sm:flex-row gap-3 items-center lg:items-start">
-                <Chart
-                  data={data?.history}
-                  floodStage={data?.floodStage}
-                  unit={data?.unit}
-                />
+                    {issuedAt && (
+                      <span className="text-[10px] text-white/70">
+                        Issued: <span className="text-white/90">{formatLocal(issuedAt)}</span>
+                      </span>
+                    )}
 
-                {predictionSeries ? (
-                  <Chart
-                    data={predictionSeries}
-                    floodStage={data?.floodStage}
-                    unit={data?.unit}
-                    color="#00ffff"
-                  />
-                ) : (
-                  <div
-                    className="flex items-center justify-center text-xs italic opacity-80 bg-black/20 rounded border border-white/10"
-                    style={{ width: 240, height: 110, minWidth: 240 }}
-                  >
-                    Forecast unavailable for the next 5 days.
+                    {confidence && (
+                      <span
+                        className="text-[10px] text-white/70 cursor-help"
+                        title="Confidence is provided by NOAA/NWPS metadata when available. If missing, NOAA did not publish a confidence flag for this gauge/issuance."
+                      >
+                        Confidence: <span className="text-white/90">{String(confidence)}</span>
+                      </span>
+                    )}
                   </div>
                 )}
               </div>
+            </div>
+
+            {/* RIGHT: charts */}
+            <div className="flex-shrink-0">
+              <div className="flex flex-col sm:flex-row gap-3 items-center lg:items-start">
+                <Chart
+                  data={past7Series}
+                  floodStage={data?.floodStage}
+                  unit={data?.unit}
+                  color="#00ffff"
+                  showDayMarks={true}
+                  showPointLabels={true}
+                  labelColor="#00ffff"
+                />
+                <div className="flex flex-col items-center">
+                  {predictionSeries ? (
+                    <Chart
+                      data={predictionSeries}
+                      floodStage={data?.floodStage}
+                      unit={data?.unit}
+                      color="#00ffff"
+                      showDayMarks={true}
+                      showPointLabels={true}
+                      labelColor="#00ffff"
+                    />
+                  ) : (
+                    <div
+                      className="flex items-center justify-center text-xs italic opacity-80 bg-black/20 rounded border border-white/10"
+                      style={{ width: 240, height: 110, minWidth: 240 }}
+                    >
+                      Forecast unavailable for the next 7 days.
+                    </div>
+                  )}
+
+                  <p
+                    className="text-[10px] mt-1 text-white/60 cursor-help text-center"
+                    title="Observed river history varies by gauge. Some NOAA/USGS stations only publish recent data. Charts show the most recent verified observations available."
+                  >
+                    ℹ Observed data availability varies by gauge
+                  </p>
+                </div>
+</div>
             </div>
           </div>
         </div>
       </section>
 
       {/* MAP */}
-      <iframe
-        src={mapSrc}
-        width="100%"
-        height="630"
-        frameBorder="0"
-        className="border-none"
-      />
+      <iframe src={mapSrc} width="100%" height="500" frameBorder="0" className="border-none" />
 
       {/* BOTTOM INFO BAR */}
       <section className="w-full border-t border-white/20 bg-slate-900/95">
@@ -633,8 +958,7 @@ export default function RiverConditions() {
               <>
                 <p className="font-semibold">{selected.name}</p>
                 <p>
-                  🌡 {weather.tempF.toFixed(1)}°F • 💨{" "}
-                  {weather.windMph.toFixed(1)} mph
+                  🌡 {weather.tempF.toFixed(1)}°F • 💨 {weather.windMph.toFixed(1)} mph
                 </p>
               </>
             )}
