@@ -18,6 +18,11 @@ export default function Footer() {
     { name: "Privacy Policy", href: "/privacy" },
   ];
 
+  const quickLinks = [
+    { name: "River Conditions", href: "/river-conditions" },
+    { name: "Weather", href: "/weather" },
+  ];
+
   return (
     <footer className="bg-card border-t mt-auto">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
@@ -25,7 +30,7 @@ export default function Footer() {
           <div>
             <h3 className="text-lg font-bold mb-4 text-primary">River Valley Report</h3>
             <p className="text-sm text-muted-foreground">
-              Your trusted source for local news, weather, and community stories.
+              delivers real-time river conditions, water-level forecasts, and localized weather data for the Ohio River Valley and surrounding waterways. Track current stages, predicted rises and falls, upstream and downstream gauge data, and weather patterns that directly impact river levels — all in one place.
             </p>
           </div>
 
@@ -51,6 +56,21 @@ export default function Footer() {
                 <li key={item.name}>
                   <Link href={item.href}>
                     <span className="text-sm text-muted-foreground hover-elevate active-elevate-2 inline-block px-2 py-1 -ml-2 rounded-md" data-testid={`link-footer-${item.name.toLowerCase().replace(/\s+/g, '-')}`}>
+                      {item.name}
+                    </span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          <div>
+            <h4 className="font-semibold mb-4">Quick Links</h4>
+            <ul className="space-y-2">
+              {quickLinks.map((item) => (
+                <li key={item.name}>
+                  <Link href={item.href}>
+                    <span className="text-sm text-muted-foreground hover-elevate active-elevate-2 inline-block px-2 py-1 -ml-2 rounded-md" data-testid={`link-footer-quick-${item.name.toLowerCase().replace(/\s+/g, '-')}`}>
                       {item.name}
                     </span>
                   </Link>

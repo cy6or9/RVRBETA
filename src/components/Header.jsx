@@ -9,9 +9,8 @@ export default function Header() {
   const { isAdmin, loginWithGoogle, logout, loading } = useAuth();
 
   const navItems = [
-    { name: "Home", href: "/" },
-    { name: "Weather", href: "/weather" },
     { name: "River Conditions", href: "/river-conditions" },
+    { name: "Weather", href: "/weather" },
   ];
 
   return (

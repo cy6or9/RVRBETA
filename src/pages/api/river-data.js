@@ -1,30 +1,28 @@
 /**
- * River Data API (Ohio River) — NWPS-only forecast, 7-day past + 7-day forecast
+ * River Data API (Ohio River) — NOAA NWPS + synthetic forecasts
+ *
+ * Data hierarchy for predicted river levels:
+ * 1. NOAA NWPS Hydrograph (official forecasts) - preferred when available
+ * 2. Trend-based synthetic projection - fallback when NOAA unavailable
+ *
+ * NOAA endpoint notes:
+ * - Primary: water.weather.gov/ahps2/hydrograph_to_xml.php (most reliable)
+ * - Fallback: water.noaa.gov, api.water.noaa.gov, service endpoints
+ * - Dev environment: May experience "fetch failed" due to network isolation
+ * - Production: Full NOAA data access will be available
+ *
+ * When NOAA data unavailable:
+ * - Calculates trend from last 3-7 days of observed history
+ * - Projects forward clamped to ±0.5 ft/day to prevent wild swings
+ * - Marked as "Projected" with "Trend" source in API response
  *
  * Goals:
- * - Observed level + recent history: USGS
- * - Official forecast: NOAA AHPS/NWPS hydrograph JSON ONLY
- * - Past chart: show 7 days of DAILY-HIGH points (one point per day)
- * - Forecast chart: show up to 7 days of DAILY-HIGH forecast points (one point per day)
- * - Bulletproof NOAA normalization (handles many gauge JSON variations)
- * - Provide forecast issuance time + confidence flags + "Official NOAA Forecast" badge
- * - Align forecast start with NOAA issuance time when possible
- *
- * Query params:
- *   - site: USGS site id (numeric) (required)
- *   - ahps: AHPS / NWSLI gauge id (e.g., UNVK2) (optional but recommended)
- *   - lat, lon: (optional) used to auto-discover nearest AHPS gauge for stations that lack forecasts
- *
- * Response:
- *   - observed, time, history (7 daily highs, USGS)
- *   - floodStage (NOAA preferred; else mapserver fallback; else NOAA fallback; else USGS metadata notes)
- *   - prediction (7 daily highs) from NOAA when available
- *   - forecastSource: "NWPS" | "None"
- *   - forecastType: "Official" | "Unavailable"
- *   - forecastMeta: issuance time + confidence + coverage
- *   - forecastBadge: { text, source } when NOAA is used
- *   - observedAvailabilityNote: tooltip string for UI
- *   - derived: trend, trendDelta, floodPercent, hazardCode, hazardLabel
+ * - Observed level + recent history: USGS (always available)
+ * - Official forecast: NOAA AHPS/NWPS hydrograph JSON
+ * - Fallback forecast: Trend projection from recent history
+ * - Past chart: show 7 days of DAILY-HIGH points
+ * - Forecast chart: show up to 7 days of predicted points
+ * - Provide metadata: issuance time, confidence, coverage
  */
 
 const CHICAGO_TZ = "America/Chicago";
@@ -84,7 +82,7 @@ async function fetchJSON(url, { timeoutMs = 12000 } = {}) {
     });
     console.log(`[FETCH-RESPONSE] ${url} => HTTP ${res.status}`);
     if (!res.ok) {
-      console.log(`[FETCH] ${url} => HTTP ${res.status}`);
+      console.log(`[FETCH] ${url} => HTTP ${res.status} (not ok)`);
       return null;
     }
     const json = await res.json().catch((e) => {
@@ -99,7 +97,7 @@ async function fetchJSON(url, { timeoutMs = 12000 } = {}) {
       return null;
     }
   } catch (err) {
-    console.log(`[FETCH] ${url} => Error:`, err.message);
+    console.log(`[FETCH] ${url} => Error:`, err.message || err.toString());
     return null;
   } finally {
     clearTimeout(t);
@@ -107,29 +105,53 @@ async function fetchJSON(url, { timeoutMs = 12000 } = {}) {
 }
 
 async function fetchAhpsHydrographJSON(ahpsId) {
-  // Try multiple NOAA endpoints
-  // https://water.weather.gov/ahps2/hydrograph_to_xml.php?gage=UNVK2&output=json
+  // Prioritize NOAA's official National Water Prediction Service (NWPS) endpoints
+  // NWPS is the authoritative forecast service for river conditions.
   
-  // Attempt 1: XML endpoint with JSON output (original)
-  let url = `https://water.weather.gov/ahps2/hydrograph_to_xml.php?gage=${encodeURIComponent(
+  // Attempt 1: Official NWPS API (National Water Center)
+  // This is the primary source for NWPS forecast data
+  let url = `https://api.water.noaa.gov/nwps/v1/gauges/${encodeURIComponent(ahpsId)}/hydrograph`;
+  console.log(`[FETCH-NWPS] Attempting official NWPS API v1:`, url);
+  let result = await fetchJSON(url, { timeoutMs: 14000 });
+  if (result && typeof result === "object" && Object.keys(result).length > 0) {
+    console.log(`[FETCH-NWPS] ✓ Official NWPS API v1 succeeded`);
+    return result;
+  }
+
+  // Attempt 2: AHPS hydrograph XML endpoint (JSON output)
+  // This is the traditional NOAA AHPS endpoint, contains both observed and forecast
+  url = `https://water.weather.gov/ahps2/hydrograph_to_xml.php?gage=${encodeURIComponent(
     ahpsId
   )}&output=json`;
-  console.log(`[FETCH] Attempting AHPS URL:`, url);
-  let result = await fetchJSON(url, { timeoutMs: 14000 });
-  if (result) return result;
-
-  // Attempt 2: National Water Center API
-  url = `https://api.water.noaa.gov/nwps/v1/gauges/${encodeURIComponent(ahpsId)}/hydrograph`;
-  console.log(`[FETCH] Fallback to National Water Center:`, url);
+  console.log(`[FETCH-NWPS] Attempting AHPS hydrograph XML (JSON output):`, url);
   result = await fetchJSON(url, { timeoutMs: 14000 });
-  if (result) return result;
+  if (result && typeof result === "object" && Object.keys(result).length > 0) {
+    console.log(`[FETCH-NWPS] ✓ AHPS hydrograph succeeded`);
+    return result;
+  }
 
-  // Attempt 3: Try AHPS REST API
+  // Attempt 3: Alternative water.noaa.gov domain
+  url = `https://water.noaa.gov/ahps2/hydrograph_to_xml.php?gage=${encodeURIComponent(
+    ahpsId
+  )}&output=json`;
+  console.log(`[FETCH-NWPS] Attempting water.noaa.gov hydrograph:`, url);
+  result = await fetchJSON(url, { timeoutMs: 14000 });
+  if (result && typeof result === "object" && Object.keys(result).length > 0) {
+    console.log(`[FETCH-NWPS] ✓ water.noaa.gov hydrograph succeeded`);
+    return result;
+  }
+
+  // Attempt 4: AHPS REST/service endpoint (fallback)
   url = `https://water.weather.gov/ahps2/service.php?location=${encodeURIComponent(ahpsId)}&output=json`;
-  console.log(`[FETCH] Fallback to REST API:`, url);
+  console.log(`[FETCH-NWPS] Attempting AHPS REST service:`, url);
   result = await fetchJSON(url, { timeoutMs: 14000 });
+  if (result && typeof result === "object" && Object.keys(result).length > 0) {
+    console.log(`[FETCH-NWPS] ✓ AHPS REST service succeeded`);
+    return result;
+  }
   
-  return result;
+  console.log(`[FETCH-NWPS] ✗ All NWPS/AHPS endpoints failed for ${ahpsId}`);
+  return null;
 }
 
 /* ----------------------------- NOAA parsing ----------------------------- */
@@ -794,6 +816,112 @@ function generateSyntheticForecast(historyDaily, days = 7) {
   return forecast.slice(0, days);
 }
 
+/**
+ * Linear regression-based projection using recent IV history (higher fidelity).
+ * - Uses the last 72h of IV points if available from historyPts (P7D raw IV)
+ * - Fits y = a + b*t (t in days), clamps slope to ±0.6 ft/day
+ * - Damps slope over the horizon to avoid runaway: factor decays to ~65% by day 7
+ */
+function generateRegressionForecastFromIV(historyPts, observedNow, days = 7) {
+  if (!Array.isArray(historyPts) || historyPts.length < 24) return null; // need enough points
+
+  const nowMs = Date.now();
+  const minMs = nowMs - 72 * 60 * 60 * 1000; // last 72h
+
+  const pts = historyPts
+    .map((p) => ({ t: new Date(p.t).getTime(), v: Number(p.v) }))
+    .filter((p) => Number.isFinite(p.t) && Number.isFinite(p.v) && p.t >= minMs && p.t <= nowMs)
+    .sort((a, b) => a.t - b.t);
+
+  if (pts.length < 16) return null;
+
+  // Normalize time to days relative to now for numerical stability
+  const x = pts.map((p) => (p.t - nowMs) / 86400000); // negative days
+  const y = pts.map((p) => p.v);
+
+  const n = x.length;
+  let sumX = 0,
+    sumY = 0,
+    sumXX = 0,
+    sumXY = 0;
+  for (let i = 0; i < n; i++) {
+    sumX += x[i];
+    sumY += y[i];
+    sumXX += x[i] * x[i];
+    sumXY += x[i] * y[i];
+  }
+  const denom = n * sumXX - sumX * sumX;
+  if (!Number.isFinite(denom) || Math.abs(denom) < 1e-9) return null;
+
+  const b = clamp((n * sumXY - sumX * sumY) / denom, -0.6, 0.6); // slope in ft/day
+  const a = sumY / n - b * (sumX / n);
+
+  // Anchor at latest observed when provided to remove residual bias
+  const y0 = typeof observedNow === "number" && Number.isFinite(observedNow) ? observedNow : a;
+
+  const out = [];
+  let currentDayKey = chicagoDayKey(new Date().toISOString());
+  for (let i = 1; i <= days; i++) {
+    // advance day
+    const d = new Date(`${currentDayKey}T18:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + 1);
+    currentDayKey = d.toISOString().slice(0, 10);
+
+    // Damping factor: starts at 1.0 and gently decays
+    const damp = 1 - Math.min(0.35, (i / days) * 0.35);
+    const yi = y0 + b * i * damp; // in ft
+
+    out.push({ t: toNoonChicagoISO(currentDayKey), v: +Number(Math.max(0, yi)).toFixed(2) });
+  }
+
+  return out;
+}
+
+/**
+ * Bias-correct an official NOAA daily forecast to the latest observed value.
+ * Applies a decaying offset over the first few days, clamped to ±1.5 ft.
+ */
+function biasCorrectForecast(dailyForecast, observedNow, issuanceISO) {
+  if (!Array.isArray(dailyForecast) || dailyForecast.length === 0) return {
+    corrected: false,
+    points: dailyForecast || [],
+    delta: 0,
+  };
+
+  if (!(typeof observedNow === "number" && Number.isFinite(observedNow))) {
+    return { corrected: false, points: dailyForecast, delta: 0 };
+  }
+
+  const issuanceKey = issuanceISO ? chicagoDayKey(issuanceISO) : null;
+  const todayKey = chicagoDayKey(new Date().toISOString());
+  const startKey = issuanceKey || todayKey;
+
+  const idx = dailyForecast.findIndex((p) => chicagoDayKey(p.t) === startKey) || 0;
+  const anchorIdx = idx >= 0 ? idx : 0;
+  const first = dailyForecast[anchorIdx];
+  if (!first) return { corrected: false, points: dailyForecast, delta: 0 };
+
+  let delta = observedNow - Number(first.v);
+  if (!Number.isFinite(delta)) return { corrected: false, points: dailyForecast, delta: 0 };
+
+  const abs = Math.abs(delta);
+  if (abs < 0.2) return { corrected: false, points: dailyForecast, delta: 0 };
+  delta = clamp(delta, -1.5, 1.5);
+
+  // Apply decaying bias over first 4 days from the anchor index
+  const out = dailyForecast.map((p, i) => {
+    const dayOffset = Math.max(0, i - anchorIdx);
+    let weight = 0;
+    if (dayOffset === 0) weight = 1.0;
+    else if (dayOffset === 1) weight = 0.66;
+    else if (dayOffset === 2) weight = 0.33;
+    else weight = 0.0;
+    return { t: p.t, v: +Number(p.v + delta * weight).toFixed(2) };
+  });
+
+  return { corrected: true, points: out, delta };
+}
+
 /* ----------------------------- handler ----------------------------- */
 
 export default async function handler(req, res) {
@@ -936,10 +1064,12 @@ export default async function handler(req, res) {
         console.log(`[FORECAST] Final daily forecast (slice 0-7): ${dailyForecast.length} points`);
 
         if (dailyForecast.length > 0) {
-          prediction = dailyForecast;
-          forecastSource = "AHPS";
+          // Bias-correct toward the latest observed stage when reasonable
+          const bc = biasCorrectForecast(dailyForecast, observed, forecastIssuedTime);
+          prediction = bc.points;
+          forecastSource = "NWPS";  // National Water Prediction Service
           forecastType = "Official";
-          console.log(`[FORECAST] SUCCESS: ${prediction.length} points assigned to prediction`);
+          console.log(`[FORECAST] SUCCESS: ${prediction.length} points assigned to prediction (NWPS)`);
 
           const conf = computeForecastConfidence({
             issuanceISO: forecastIssuedTime,
@@ -952,8 +1082,11 @@ export default async function handler(req, res) {
           forecastCoverageDays = prediction.length;
           forecastCoverageNote =
             prediction.length >= 7
-              ? "Full 7-day forecast available."
-              : `Partial forecast available (${prediction.length} day${prediction.length === 1 ? "" : "s"}).`;
+              ? "NWPS: Full 7-day forecast available."
+              : `NWPS: Partial forecast available (${prediction.length} day${prediction.length === 1 ? "" : "s"}).`;
+          if (bc.corrected) {
+            forecastCoverageNote += ` Bias-corrected to latest observed (Δ ${bc.delta.toFixed(2)} ft).`;
+          }
         } else {
           console.log(`[FORECAST] FAIL: dailyForecast is empty`);
           forecastCoverageDays = 0;
@@ -973,15 +1106,27 @@ export default async function handler(req, res) {
     
     // If NOAA failed, generate synthetic forecast from recent trend  
     if (!prediction || prediction.length === 0) {
-      console.log(`[FORECAST] Generating synthetic forecast from trend...`);
-      const synth = generateSyntheticForecast(historyDaily);
-      if (synth && synth.length > 0) {
-        prediction = synth;
+      console.log(`[FORECAST] NOAA forecast unavailable for ${ahpsId}`);
+      console.log(`[FORECAST] Attempting synthetic fallback using historical trend...`);
+      // Try higher-fidelity regression first
+      const reg = generateRegressionForecastFromIV(historyPts, observed, 7);
+      if (reg && reg.length > 0) {
+        prediction = reg;
         forecastSource = "Trend";
         forecastType = "Projected";
         forecastCoverageDays = prediction.length;
-        forecastCoverageNote = `Trend-based projection (${prediction.length} days)`;
-        console.log(`[FORECAST] Synthetic forecast: ${prediction.length} points`);
+        forecastCoverageNote = `Regression-based projection (${prediction.length} days) — NOAA forecast unavailable`;
+        console.log(`[FORECAST] Using regression forecast: ${prediction.length} points`);
+      } else {
+        const synth = generateSyntheticForecast(historyDaily);
+        if (synth && synth.length > 0) {
+          prediction = synth;
+          forecastSource = "Trend";
+          forecastType = "Projected";
+          forecastCoverageDays = prediction.length;
+          forecastCoverageNote = `Trend-based projection (${prediction.length} days) — NOAA forecast unavailable`;
+          console.log(`[FORECAST] Using synthetic forecast: ${prediction.length} points`);
+        }
       }
     }
 
@@ -1047,7 +1192,22 @@ export default async function handler(req, res) {
         : "No AHPS/NWPS gauge available",
       // keep a tiny debug breadcrumb (safe)
       extractor: extractorDebug || null,
+      corrected: undefined, // filled below if applicable
+      correctionDelta: undefined,
+      projectionMethod: forecastType === "Projected" && prediction?.length ? (forecastCoverageNote?.startsWith("Regression") ? "regression72h" : "trend-daily-high") : undefined,
     };
+
+    if (forecastType === "Official" && Array.isArray(prediction) && prediction.length) {
+      // retro-detect if bias correction was applied by comparing first day to observed
+      const first = prediction[0];
+      if (first && typeof observed === "number" && Number.isFinite(observed)) {
+        const delta = observed - Number(first.v);
+        if (Number.isFinite(delta) && Math.abs(delta) >= 0.2) {
+          forecastMeta.corrected = true;
+          forecastMeta.correctionDelta = +Number(clamp(delta, -1.5, 1.5)).toFixed(2);
+        }
+      }
+    }
 
     // Ensure we never exceed 7 points for either series
     const historyOut = historyDaily.slice(-7);

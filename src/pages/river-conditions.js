@@ -826,6 +826,9 @@ export default function RiverConditions() {
     data?.forecastMeta?.confidence ??
     null;
 
+  const wasCorrected = !!(data?.forecastMeta?.corrected);
+  const projectionMethod = data?.forecastMeta?.projectionMethod;
+
   /* -------------------- RENDER ---------------------- */
 
   return (
@@ -879,8 +882,11 @@ export default function RiverConditions() {
                 {/* ✅ NWPS badge + issuance + confidence (only if present) */}
                 {isNWPS && (
                   <div className="mt-2 flex flex-wrap items-center gap-2">
-                    <span className="inline-flex items-center gap-2 px-2 py-1 rounded-full text-[10px] font-semibold bg-cyan-600/20 border border-cyan-400/30 text-cyan-200">
-                      ✅ Official NOAA Forecast
+                    <span
+                      className="inline-flex items-center gap-2 px-2 py-1 rounded-full text-[10px] font-semibold bg-cyan-600/20 border border-cyan-400/30 text-cyan-200"
+                      title={wasCorrected ? "NOAA National Water Prediction Service (NWPS) forecast, bias-corrected to latest observed stage." : "NOAA National Water Prediction Service (NWPS) official hydrograph forecast."}
+                    >
+                      ✅ {wasCorrected ? "NWPS Forecast (bias-corrected)" : "NWPS Forecast"}
                     </span>
 
                     {issuedAt && (
@@ -936,9 +942,15 @@ export default function RiverConditions() {
 
                   <p
                     className="text-[10px] mt-1 text-white/60 cursor-help text-center"
-                    title="Observed river history varies by gauge. Some NOAA/USGS stations only publish recent data. Charts show the most recent verified observations available."
+                    title={forecastType === "Projected" 
+                      ? (projectionMethod === 'regression72h'
+                          ? "Regression-based projection using last 72h of river levels with slope damping. NOAA forecasts will be used when available."
+                          : "Trend-based projection using recent daily highs. NOAA forecasts will be used when available.")
+                      : "Observed data availability varies by gauge. Some NOAA/USGS stations only publish recent data. Charts show the most recent verified observations available."}
                   >
-                    ℹ Observed data availability varies by gauge
+                    {forecastType === "Projected" 
+                      ? (projectionMethod === 'regression72h' ? "ℹ Regression projection (NOAA unavailable)" : "ℹ Trend projection (NOAA unavailable)")
+                      : "ℹ Observed data availability varies by gauge"}
                   </p>
                 </div>
 </div>
