@@ -22,7 +22,7 @@ export default function Footer() {
           <div>
             <h3 className="text-lg font-bold mb-4" style={{ color: "#177245" }}>River Valley Report</h3>
             <p className="text-sm text-foreground/70">
-              delivers real-time river conditions, water-level forecasts, and localized weather data for the Ohio River Valley and surrounding waterways. Track current stages, predicted rises and falls, upstream and downstream gauge data, and weather patterns that directly impact river levels — all in one place.
+              Delivers real-time river conditions, water-level forecasts, and localized weather data for the Ohio River Valley and surrounding waterways. Track current stages, predicted rises and falls, upstream and downstream gauge data, and weather patterns that directly impact river levels — all in one place.
             </p>
           </div>
 
