@@ -239,14 +239,17 @@ function normalizeForecastSeries(payload, days = 7) {
 const distKm = (lat1, lon1, lat2, lon2) => {
   const R = 6371;
   const dLat = ((lat2 - lat1) * Math.PI) / 180;
-  const dLon = ((lat2 - lon1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+
   const a =
     Math.sin(dLat / 2) ** 2 +
     Math.cos((lat1 * Math.PI) / 180) *
       Math.cos((lat2 * Math.PI) / 180) *
       Math.sin(dLon / 2) ** 2;
+
   return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 };
+const kmToMiles = (km) => km * 0.621371;
 
 const windDirLabel = (deg) => {
   if (deg == null || isNaN(deg)) return "";
@@ -633,6 +636,7 @@ export default function RiverConditions() {
   const [data, setData] = useState(null);
   const [weather, setWeather] = useState(null);
   const [aqi, setAqi] = useState(null);
+  const [findMeInfo, setFindMeInfo] = useState(null);
 
   const [wxLoc, setWxLoc] = useState({
     lat: defaultStation.lat,
@@ -755,29 +759,122 @@ export default function RiverConditions() {
     loadAQI(wxLoc.lat, wxLoc.lon);
   }, [wxLoc]);
 
+  const findDownstreamStation = (userLat, userLon, stations) => {
+  if (!Array.isArray(stations) || stations.length === 0) return null;
+
+  // Step 1: nearest station
+  let nearest = null;
+  let bestDist = Infinity;
+
+  for (const s of stations) {
+    if (typeof s?.lat !== "number" || typeof s?.lon !== "number") continue;
+    const d = distKm(userLat, userLon, s.lat, s.lon);
+    if (d < bestDist) {
+      bestDist = d;
+      nearest = s;
+    }
+  }
+
+  if (!nearest) return null;
+
+  // Step 2: downstream using river mile (preferred)
+  if (typeof nearest.riverMile === "number") {
+    const downstream = stations
+      .filter(
+        (s) =>
+          typeof s?.riverMile === "number" &&
+          s.riverMile > nearest.riverMile
+      )
+      .sort((a, b) => a.riverMile - b.riverMile)[0];
+
+    return downstream || nearest;
+  }
+
+  // Step 3: fallback — Ohio River flows south/southwest
+  const fallback = stations
+    .filter((s) => typeof s?.lat === "number" && s.lat < nearest.lat)
+    .sort((a, b) => b.lat - a.lat)[0];
+
+  return fallback || nearest;
+};
+const buildFindMeInfo = (userLat, userLon, station) => {
+  if (!station) return null;
+
+  let distanceText = "";
+
+  // Prefer river miles
+  if (
+    typeof station.riverMile === "number" &&
+    typeof station.nearestRiverMile === "number"
+  ) {
+    const delta = station.riverMile - station.nearestRiverMile;
+    if (delta > 0) {
+      distanceText = `${delta.toFixed(1)} river miles downstream`;
+    }
+  }
+
+  // Fallback: straight-line miles
+  if (!distanceText && typeof station.lat === "number") {
+    const km = distKm(userLat, userLon, station.lat, station.lon);
+    const miles = kmToMiles(km);
+    distanceText = `${miles.toFixed(1)} miles downstream`;
+  }
+
+  return {
+    label: `📍 You are upstream of ${station.name}`,
+    distance: distanceText,
+  };
+};
+
   /* -------------------- LOCATE ME ----------------------- */
 
-  const locateMe = () =>
-    navigator.geolocation?.getCurrentPosition(
-      ({ coords }) => {
-        setMapCenter({ lat: coords.latitude, lon: coords.longitude });
+  const locateMe = () => {
+  if (!navigator.geolocation) {
+    alert("Geolocation is not supported by this browser.");
+    return;
+  }
 
-        let near = stations[0],
-          score = 9999;
+  navigator.geolocation.getCurrentPosition(
+    ({ coords }) => {
+      const userLat = coords.latitude;
+      const userLon = coords.longitude;
 
-        stations.forEach((s) => {
-          const d = distKm(coords.latitude, coords.longitude, s.lat, s.lon);
-          if (d < score) {
-            score = d;
-            near = s;
-          }
-        });
+      // Center map on user
+      setMapCenter({ lat: userLat, lon: userLon });
 
-        setSelected(near);
-        setWxLoc({ lat: near.lat, lon: near.lon });
-      },
-      () => alert("Unable to get location.")
-    );
+      // Weather follows user
+      setWxLoc({ lat: userLat, lon: userLon });
+
+      // 🔥 THIS IS THE IMPORTANT PART
+      const downstreamStation = findDownstreamStation(
+  userLat,
+  userLon,
+  stations
+);
+
+if (downstreamStation) {
+  setSelected(downstreamStation);
+
+  const info = buildFindMeInfo(
+    userLat,
+    userLon,
+    downstreamStation
+  );
+
+  setFindMeInfo(info);
+}
+    },
+    (err) => {
+      console.error("Geolocation error:", err);
+      alert("Unable to get location.");
+    },
+    {
+      enableHighAccuracy: true,
+      timeout: 12000,
+      maximumAge: 60_000,
+    }
+  );
+};
 
   /* -------------------- DERIVED UI VALUES -------------------- */
 
@@ -841,8 +938,8 @@ export default function RiverConditions() {
 
         <div className="max-w-6xl mx-auto px-4 pb-3">
           <div className="flex flex-col lg:flex-row items-stretch justify-between gap-6">
-            {/* LEFT */}
-            <div className="flex-1 min-w-[280px]">
+            {/* LEFT: Station selector */}
+            <div className="flex-1 min-w-[220px]">
               <div className="flex items-center gap-2 mt-2">
                 <label className="text-sm">Station:</label>
                 <select
@@ -871,41 +968,48 @@ export default function RiverConditions() {
                   {typeof data?.observed === "number" ? `${data.observed.toFixed(2)} ft` : "Loading…"}
                   {data?.time ? ` at ${formatLocal(data.time)}` : ""}
                 </p>
-
-                <div className="mt-2 flex flex-col items-center text-center">
-                <p className="text-xs mt-1 text-white/80">
-                  Flood Stage: {hasFloodStage ? `${Number(data.floodStage).toFixed(1)} ft` : "N/A"}
-                </p>
-
-                <RiverLevelIndicator history={data?.history} hazardCode={hazardCode} />
               </div>
-                {/* ✅ NWPS badge + issuance + confidence (only if present) */}
-                {isNWPS && (
-                  <div className="mt-2 flex flex-wrap items-center gap-2">
-                    <span
-                      className="inline-flex items-center gap-2 px-2 py-1 rounded-full text-[10px] font-semibold bg-cyan-600/20 border border-cyan-400/30 text-cyan-200"
-                      title={wasCorrected ? "NOAA National Water Prediction Service (NWPS) forecast, bias-corrected to latest observed stage." : "NOAA National Water Prediction Service (NWPS) official hydrograph forecast."}
-                    >
-                      ✅ {wasCorrected ? "NWPS Forecast (bias-corrected)" : "NWPS Forecast"}
+            </div>
+
+            {/* CENTER: Flood stage, river danger, find me info */}
+            <div className="flex-1 flex flex-col items-center justify-center text-center">
+              <p className="text-xs text-white/80">
+                Flood Stage: {hasFloodStage ? `${Number(data.floodStage).toFixed(1)} ft` : "N/A"}
+              </p>
+              <RiverLevelIndicator history={data?.history} hazardCode={hazardCode} />
+              {findMeInfo && (
+                <div className="mt-2 text-xs text-white/70">
+                  <div>{findMeInfo.label}</div>
+                  {findMeInfo.distance && (
+                    <div className="opacity-80">{findMeInfo.distance}</div>
+                  )}
+                </div>
+              )}
+              {isNWPS && (
+                <div className="mt-2 flex flex-col items-center gap-1">
+                  <span
+                    className="inline-flex items-center gap-2 px-2 py-1 rounded-full text-[10px] font-semibold bg-cyan-600/20 border border-cyan-400/30 text-cyan-200"
+                    title={wasCorrected ? "NOAA National Water Prediction Service (NWPS) forecast, bias-corrected to latest observed stage." : "NOAA National Water Prediction Service (NWPS) official hydrograph forecast."}
+                  >
+                    ✅ {wasCorrected ? "NWPS Forecast (bias-corrected)" : "NWPS Forecast"}
+                  </span>
+
+                  {issuedAt && (
+                    <span className="text-[10px] text-white/70">
+                      Issued: <span className="text-white/90">{formatLocal(issuedAt)}</span>
                     </span>
+                  )}
 
-                    {issuedAt && (
-                      <span className="text-[10px] text-white/70">
-                        Issued: <span className="text-white/90">{formatLocal(issuedAt)}</span>
-                      </span>
-                    )}
-
-                    {confidence && (
-                      <span
-                        className="text-[10px] text-white/70 cursor-help"
-                        title="Confidence is provided by NOAA/NWPS metadata when available. If missing, NOAA did not publish a confidence flag for this gauge/issuance."
-                      >
-                        Confidence: <span className="text-white/90">{String(confidence)}</span>
-                      </span>
-                    )}
-                  </div>
-                )}
-              </div>
+                  {confidence && (
+                    <span
+                      className="text-[10px] text-white/70 cursor-help"
+                      title="Confidence is provided by NOAA/NWPS metadata when available. If missing, NOAA did not publish a confidence flag for this gauge/issuance."
+                    >
+                      Confidence: <span className="text-white/90">{String(confidence)}</span>
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* RIGHT: charts */}
