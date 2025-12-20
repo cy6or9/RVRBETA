@@ -1,11 +1,10 @@
-"use client";
-
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { useRouter } from "next/router";
 import { useAuth } from "@/context/AuthContext";
 
 export default function Header() {
-  const pathname = usePathname();
+  const router = useRouter();
+  const pathname = router.pathname;
   const { isAdmin, loginWithGoogle, logout, loading } = useAuth();
 
   const navItems = [
@@ -14,7 +13,7 @@ export default function Header() {
   ];
 
   return (
-    <header className="w-full border-b border-border bg-background/80 backdrop-blur z-[999] sticky top-0">
+    <header className="w-full border-b border-border bg-background/80 backdrop-blur z-[999] static">
       <div className="max-w-7xl mx-auto flex items-center justify-between px-4 sm:px-6 lg:px-8 py-4">
 
         {/* Brand */}

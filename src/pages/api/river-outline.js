@@ -1,121 +1,457 @@
-/**
- * River Outline API — Cached accurate Ohio River trace
- * 
- * Returns the precise Ohio River polyline coordinates from Pittsburgh to the confluence.
- * This data is cached and served instantly without external API calls.
- */
+// Ohio River outline API - Fetches real hydrographic data from USGS
+// Uses actual navigation channel data from authoritative sources
 
-// Accurate Ohio River trace with all lock and dam locations
-const ACCURATE_OHIO_RIVER_PATH = [
-  // Pittsburgh to Dashields
-  [40.4406, -80.0034], [40.4450, -80.0150], [40.4520, -80.0300], [40.4600, -80.0500],
-  [40.4750, -80.0700], [40.4900, -80.1000], [40.5050, -80.1300], [40.5200, -80.1600],
-  [40.5200, -80.2000], // Dashields L&D
+import fs from 'fs';
+import path from 'path';
 
-  // Dashields to Montgomery
-  [40.5250, -80.2100], [40.5300, -80.2200], [40.5400, -80.2500], [40.5500, -80.2800],
-  [40.5650, -80.3100], [40.5800, -80.3400], [40.6000, -80.3700], [40.6200, -80.3900],
-  [40.6400, -80.4000], // Montgomery L&D
+export default async function handler(req, res) {
+  try {
+    // First, check if we have pre-downloaded USGS data
+    const localDataPath = path.join(process.cwd(), 'public', 'geo', 'ohio-river.json');
+    if (fs.existsSync(localDataPath)) {
+      const localData = JSON.parse(fs.readFileSync(localDataPath, 'utf8'));
+      console.log('[API] Using pre-downloaded USGS data from', localDataPath);
+      
+      // Handle both old format (single coordinates array) and new format (multiple polylines)
+      let elements = [];
+      
+      if (localData.polylines && Array.isArray(localData.polylines)) {
+        // New format: multiple polylines
+        console.log('[API] Using multi-polyline format:', localData.polylines.length, 'segments');
+        elements = localData.polylines.map(line => ({
+          type: 'way',
+          name: line.name || 'Ohio River',
+          coordinates: line.coordinates,
+          color: '#06b6d4',
+          weight: 4,
+          opacity: 0.9
+        }));
+      } else if (localData.coordinates && Array.isArray(localData.coordinates)) {
+        // Old format: single coordinates array
+        console.log('[API] Using single polyline format');
+        elements = [{
+          type: 'way',
+          name: 'Ohio River',
+          coordinates: localData.coordinates,
+          color: '#06b6d4',
+          weight: 4,
+          opacity: 0.9
+        }];
+      }
+      
+      return res.status(200).json({
+        success: true,
+        source: localData.source || 'USGS NHD (cached)',
+        elements: elements
+      });
+    }
 
-  // Montgomery to New Cumberland
-  [40.6350, -80.4200], [40.6250, -80.4500], [40.6100, -80.4800], [40.5900, -80.5100],
-  [40.5700, -80.5400], [40.5500, -80.5700], [40.5300, -80.6000], [40.5150, -80.6300],
-  [40.5100, -80.6500], // New Cumberland L&D
+    // Fetch actual Ohio River flowline from USGS National Hydrography Dataset
+    // Using WFS (Web Feature Service) to get real hydrographic data
+    const wfsUrl = 'https://hydro.nationalmap.gov/arcgis/rest/services/nhd/MapServer/6/query';
+    
+    const params = new URLSearchParams({
+      where: "gnis_name='Ohio River'",
+      outFields: '*',
+      returnGeometry: 'true',
+      geometryType: 'esriGeometryPolyline',
+      f: 'geojson',
+      outSR: '4326'
+    });
 
-  // New Cumberland to Pike Island
-  [40.4900, -80.6600], [40.4650, -80.6700], [40.4400, -80.6750], [40.4100, -80.6800],
-  [40.3800, -80.6850], [40.3450, -80.6875], [40.3100, -80.6900], [40.2700, -80.6900],
-  [40.2300, -80.6900], [40.1900, -80.6900], [40.1500, -80.6900], [40.1100, -80.6900],
-  [40.0900, -80.6900], // Pike Island L&D
+    console.log('[API] Fetching Ohio River data from USGS NHD...');
+    const response = await fetch(`${wfsUrl}?${params}`);
+    
+    if (!response.ok) {
+      throw new Error(`USGS API request failed: ${response.status}`);
+    }
 
-  // Pike Island to Hannibal
-  [40.0700, -80.7000], [40.0450, -80.7150], [40.0150, -80.7350], [39.9800, -80.7600],
-  [39.9400, -80.7900], [39.9000, -80.8150], [39.8600, -80.8350], [39.8200, -80.8550],
-  [39.7800, -80.8700], [39.7400, -80.8750], [39.7000, -80.8700], [39.6700, -80.8700], // Hannibal L&D
+    const geojson = await response.json();
+    console.log('[API] Received USGS data:', geojson.features?.length, 'features');
 
-  // Hannibal to Marietta
-  [39.6400, -80.8800], [39.6000, -80.9000], [39.5600, -80.9300], [39.5200, -80.9700],
-  [39.4900, -81.0100], [39.4650, -81.0600], [39.4450, -81.1200], [39.4350, -81.1900],
-  [39.4300, -81.2600], [39.4250, -81.3300], [39.4225, -81.4000], [39.4200, -81.4600],
+    if (geojson.features && geojson.features.length > 0) {
+      // Extract coordinates from GeoJSON features
+      const allCoordinates = [];
+      
+      for (const feature of geojson.features) {
+        if (feature.geometry && feature.geometry.type === 'LineString') {
+          // GeoJSON uses [lon, lat], Leaflet uses [lat, lon]
+          const coords = feature.geometry.coordinates.map(coord => [coord[1], coord[0]]);
+          allCoordinates.push(...coords);
+        } else if (feature.geometry && feature.geometry.type === 'MultiLineString') {
+          // Handle MultiLineString
+          for (const line of feature.geometry.coordinates) {
+            const coords = line.map(coord => [coord[1], coord[0]]);
+            allCoordinates.push(...coords);
+          }
+        }
+      }
 
-  // Marietta to Parkersburg
-  [39.4100, -81.5000], [39.3900, -81.5250], [39.3650, -81.5400], [39.3350, -81.5500],
-  [39.3000, -81.5550], [39.2700, -81.5600],
+      if (allCoordinates.length > 0) {
+        console.log('[API] Extracted', allCoordinates.length, 'coordinate points from USGS data');
+        return res.status(200).json({
+          success: true,
+          source: 'USGS National Hydrography Dataset',
+          elements: [{
+            type: 'way',
+            name: 'Ohio River',
+            coordinates: allCoordinates,
+            color: '#06b6d4',
+            weight: 4,
+            opacity: 0.9
+          }]
+        });
+      }
+    }
 
-  // Parkersburg to Racine
-  [39.2300, -81.5500], [39.1850, -81.5300], [39.1350, -81.5000], [39.0850, -81.4700],
-  [39.0700, -81.4400], [39.0500, -81.5000], [39.0300, -81.5700], [39.0100, -81.6500],
-  [38.9850, -81.7400], [38.9650, -81.8400], [38.9500, -81.9500], [38.9400, -82.0600],
-  [38.9300, -82.1200], // Racine L&D
+    throw new Error('No valid geometry data found in USGS response');
 
-  // Racine to Point Pleasant
-  [38.9200, -82.1500], [38.9050, -82.1650], [38.8850, -82.1700], [38.8600, -82.1600],
-  [38.8400, -82.1300],
+  } catch (error) {
+    console.error('[API] Failed to fetch from USGS:', error);
+    
+    // Try alternative: OpenStreetMap waterway data (better than nothing)
+    try {
+      const overpassUrl = 'https://overpass-api.de/api/interpreter';
+      const query = `
+        [out:json][timeout:30];
+        (
+          way["waterway"="river"]["name"="Ohio River"];
+          relation["waterway"="river"]["name"="Ohio River"];
+        );
+        out geom;
+      `;
+      
+      console.log('[API] Trying OSM Overpass as fallback...');
+      const osmResponse = await fetch(overpassUrl, {
+        method: 'POST',
+        body: 'data=' + encodeURIComponent(query),
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+      });
 
-  // Point Pleasant to Greenup
-  [38.8200, -82.1500], [38.7900, -82.2000], [38.7550, -82.2600], [38.7200, -82.3300],
-  [38.6850, -82.4100], [38.6550, -82.5000], [38.6300, -82.5900], [38.6100, -82.6850],
-  [38.5950, -82.7700], [38.5800, -82.8200], [38.5700, -82.8400], // Greenup L&D
+      if (osmResponse.ok) {
+        const osmData = await osmResponse.json();
+        const coordinates = [];
+        
+        // Sort elements by position to maintain order
+        const sortedElements = osmData.elements.sort((a, b) => {
+          const aLat = a.geometry?.[0]?.lat || a.lat || 0;
+          const bLat = b.geometry?.[0]?.lat || b.lat || 0;
+          return bLat - aLat; // Sort north to south (Pittsburgh to Cairo)
+        });
+        
+        for (const element of sortedElements) {
+          if (element.type === 'way' && element.geometry) {
+            for (const node of element.geometry) {
+              coordinates.push([node.lat, node.lon]);
+            }
+          }
+        }
 
-  // Greenup to Portsmouth
-  [38.5800, -82.8700], [38.6000, -82.9000], [38.6250, -82.9300], [38.6550, -82.9600],
-  [38.6850, -82.9800], [38.7100, -83.0000], [38.7300, -83.0100], // Portsmouth L&D
+        if (coordinates.length > 0) {
+          console.log('[API] Using OSM data with', coordinates.length, 'points');
+          return res.status(200).json({
+            success: true,
+            source: 'OpenStreetMap (fallback)',
+            elements: [{
+              type: 'way',
+              name: 'Ohio River',
+              coordinates: coordinates,
+              color: '#06b6d4',
+              weight: 4,
+              opacity: 0.9
+            }]
+          });
+        }
+      }
+    } catch (osmError) {
+      console.error('[API] OSM fallback also failed:', osmError);
+    }
 
-  // Portsmouth to Maysville
-  [38.7200, -83.0500], [38.7050, -83.1100], [38.6900, -83.1800], [38.6750, -83.2600],
-  [38.6650, -83.3500], [38.6600, -83.4500], [38.6575, -83.5500], [38.6575, -83.6500],
-  [38.6550, -83.7200], [38.6475, -83.7500], [38.6400, -83.7700], // Maysville L&D
+    // Final fallback: Use major navigation waypoints based on lock positions
+    console.log('[API] Using static navigation waypoints as last resort');
+    const navigationWaypoints = [
+    // Pittsburgh to Emsworth (Mile 0-6)
+    [40.4406, -80.0195], // Pittsburgh - Point State Park
+    [40.4520, -80.0450],
+    [40.4680, -80.0720],
+    [40.4850, -80.0950],
+    [40.5020, -80.1180],
+    
+    // Emsworth to Dashields (Mile 6-13)
+    [40.5180, -80.1450],
+    [40.5220, -80.1980], // Dashields Lock
+    [40.5350, -80.2280],
+    [40.5480, -80.2580],
+    [40.5650, -80.2880],
+    
+    // Dashields to Montgomery (Mile 13-32)
+    [40.5820, -80.3150],
+    [40.6000, -80.3420],
+    [40.6180, -80.3680],
+    [40.6350, -80.3900], // Montgomery Lock
+    [40.6280, -80.4180],
+    [40.6150, -80.4480],
+    [40.5980, -80.4800],
+    [40.5780, -80.5150],
+    [40.5550, -80.5520],
+    [40.5280, -80.5920],
+    [40.5050, -80.6280],
+    
+    // New Cumberland (Mile 54)
+    [40.5120, -80.6490], // New Cumberland Lock
+    [40.4850, -80.6620],
+    [40.4520, -80.6720],
+    [40.4150, -80.6800],
+    [40.3750, -80.6850],
+    [40.3320, -80.6880],
+    [40.2850, -80.6920],
+    [40.2350, -80.6980],
+    [40.1820, -80.7030],
+    [40.1280, -80.7050],
+    [40.0950, -80.7020], // Pike Island Lock (Mile 84)
+    
+    // Pike Island to Hannibal (Mile 84-126)
+    [40.0640, -80.7209], // Wheeling
+    [40.0380, -80.7380],
+    [40.0080, -80.7580],
+    [39.9750, -80.7750],
+    [39.9380, -80.7920],
+    [39.9000, -80.8050],
+    [39.8580, -80.8180],
+    [39.8150, -80.8320],
+    [39.7720, -80.8450],
+    [39.7280, -80.8580],
+    [39.6850, -80.8680], // Hannibal Lock (Mile 126)
+    
+    // Hannibal to Willow Island (Mile 126-161)
+    [39.6420, -80.8850],
+    [39.5980, -80.9150],
+    [39.5580, -80.9580],
+    [39.5220, -81.0150],
+    [39.4920, -81.0820],
+    [39.4680, -81.1550],
+    [39.4520, -81.2280],
+    [39.4400, -81.3020],
+    [39.4320, -81.3780],
+    [39.4250, -81.4420], // Willow Island Lock (Mile 161)
+    
+    // Willow Island to Belleville (Mile 161-204)
+    [39.4050, -81.4780],
+    [39.3820, -81.4980],
+    [39.3580, -81.5150],
+    [39.3320, -81.5280],
+    [39.3050, -81.5420],
+    [39.2780, -81.5550],
+    [39.2710, -81.5590], // Belleville Lock (Mile 204)
+    
+    // Belleville to Racine (Mile 204-237)
+    [39.2420, -81.5680],
+    [39.2120, -81.5820],
+    [39.1820, -81.5980],
+    [39.1520, -81.6180],
+    [39.1220, -81.6420],
+    [39.0920, -81.6720],
+    [39.0680, -81.7080],
+    [39.0520, -81.7580],
+    [39.0420, -81.8180],
+    [39.0360, -81.8820],
+    [39.0320, -81.9480], // Racine Lock (Mile 237)
+    
+    // Racine to R.C. Byrd (Mile 237-279)
+    [39.0220, -82.0150],
+    [39.0080, -82.0650],
+    [38.9900, -82.0980],
+    [38.9680, -82.1120],
+    [38.9420, -82.1180],
+    [38.9320, -82.1200], // R.C. Byrd Lock (Mile 279)
+    [38.9020, -82.1250],
+    [38.8680, -82.1300],
+    
+    // R.C. Byrd to Greenup (Mile 279-341)
+    [38.8420, -82.1330], // Point Pleasant
+    [38.8050, -82.1620],
+    [38.7680, -82.2080],
+    [38.7350, -82.2680],
+    [38.7050, -82.3350],
+    [38.6750, -82.4050],
+    [38.6450, -82.4720],
+    [38.6150, -82.5350],
+    [38.5850, -82.5950],
+    [38.5580, -82.6520],
+    [38.5380, -82.7080],
+    [38.5280, -82.7580],
+    [38.5320, -82.8020],
+    [38.5480, -82.8320], // Greenup Lock (Mile 341)
+    
+    // Greenup to Meldahl (Mile 341-436)
+    [38.5720, -82.8680],
+    [38.6020, -82.9020],
+    [38.6380, -82.9380],
+    [38.6720, -82.9680],
+    [38.7020, -82.9920],
+    [38.7280, -83.0150], // Portsmouth
+    [38.7380, -83.0720],
+    [38.7480, -83.1380],
+    [38.7560, -83.2080],
+    [38.7620, -83.2780],
+    [38.7660, -83.3480],
+    [38.7650, -83.4180],
+    [38.7580, -83.4820],
+    [38.7420, -83.5420],
+    [38.7220, -83.6020],
+    [38.7020, -83.6520],
+    [38.6850, -83.7080],
+    [38.6820, -83.7590], // Meldahl Lock (Mile 436)
+    
+    // Meldahl to McAlpine (Mile 436-606)
+    [38.6880, -83.8080],
+    [38.6980, -83.8580],
+    [38.7120, -83.9020],
+    [38.7320, -83.9480],
+    [38.7520, -83.9920],
+    [38.7680, -84.0420],
+    [38.7820, -84.0920], // Maysville
+    [38.7980, -84.1480],
+    [38.8180, -84.1980],
+    [38.8420, -84.2420],
+    [38.8720, -84.2880],
+    [38.9080, -84.3320],
+    [38.9480, -84.3720],
+    [38.9920, -84.4080],
+    [39.0380, -84.4520],
+    [39.0780, -84.4920],
+    [39.0980, -84.5150], // Cincinnati
+    [39.1020, -84.5520],
+    [39.0980, -84.5920],
+    [39.0880, -84.6320],
+    [39.0720, -84.6720],
+    [39.0520, -84.7180],
+    [39.0280, -84.7620],
+    [39.0020, -84.8020],
+    [38.9720, -84.8380],
+    [38.9420, -84.8680],
+    [38.9080, -84.8980],
+    [38.8720, -84.9180],
+    [38.8380, -84.9300],
+    [38.8020, -84.9400],
+    [38.7780, -84.9420], // Markland Lock (Mile 531)
+    [38.7420, -84.9780],
+    [38.7080, -85.0220],
+    [38.6780, -85.0720],
+    [38.6520, -85.1320],
+    [38.6280, -85.1920],
+    [38.6020, -85.2520],
+    [38.5780, -85.3120],
+    [38.5480, -85.3680],
+    [38.5120, -85.4220],
+    [38.4780, -85.4780],
+    [38.4420, -85.5280],
+    [38.4080, -85.5680],
+    [38.3720, -85.6020],
+    [38.3380, -85.6480],
+    [38.3080, -85.6980],
+    [38.2820, -85.7480],
+    [38.2580, -85.7920], // McAlpine Lock (Louisville, Mile 606)
+    
+    // McAlpine to Smithland (Mile 606-919)
+    [38.2320, -85.8420],
+    [38.2080, -85.8880],
+    [38.1820, -85.9280],
+    [38.1520, -85.9720],
+    [38.1220, -86.0220],
+    [38.0920, -86.0820],
+    [38.0680, -86.1480],
+    [38.0480, -86.2120],
+    [38.0280, -86.2820],
+    [38.0080, -86.3480],
+    [37.9880, -86.4080],
+    [37.9680, -86.4720],
+    [37.9480, -86.5320],
+    [37.9280, -86.5880],
+    [37.9180, -86.6480],
+    [37.9120, -86.7080],
+    [37.9080, -86.7680], // Cannelton Lock (Mile 720)
+    [37.9100, -86.8280],
+    [37.9150, -86.8880],
+    [37.9200, -86.9480],
+    [37.9250, -87.0120],
+    [37.9280, -87.0780],
+    [37.9300, -87.1420],
+    [37.9310, -87.2120],
+    [37.9310, -87.2880],
+    [37.9305, -87.3580],
+    [37.9300, -87.4180], // Newburgh Lock (Mile 776)
+    [37.9350, -87.4680],
+    [37.9420, -87.5080],
+    [37.9520, -87.5420],
+    [37.9650, -87.5680],
+    [37.9750, -87.5780], // Evansville (Mile 792)
+    [37.9650, -87.6220],
+    [37.9480, -87.6720],
+    [37.9280, -87.7120],
+    [37.9020, -87.7520],
+    [37.8780, -87.7980],
+    [37.8480, -87.8420],
+    [37.8180, -87.8920],
+    [37.7920, -87.9420],
+    [37.7720, -87.9880], // J.T. Myers Lock (Mile 846)
+    [37.7520, -88.0280],
+    [37.7320, -88.0620],
+    [37.7120, -88.0980],
+    [37.6980, -88.1280],
+    [37.6800, -88.1580],
+    [37.6620, -88.1880],
+    [37.6420, -88.2180],
+    [37.6220, -88.2480],
+    [37.6020, -88.2780],
+    [37.5780, -88.3080],
+    [37.5520, -88.3380],
+    [37.5220, -88.3620],
+    [37.4920, -88.3880],
+    [37.4580, -88.4120],
+    [37.4280, -88.4320],
+    [37.3980, -88.4520],
+    [37.3680, -88.4720],
+    [37.3380, -88.4880],
+    [37.3080, -88.5020],
+    [37.2780, -88.5120],
+    [37.2480, -88.5080],
+    [37.2120, -88.4980],
+    [37.1820, -88.4780],
+    [37.1580, -88.4580],
+    [37.1480, -88.4420], // Smithland Lock (Mile 919)
+    
+    // Smithland to Cairo (Mile 919-981)
+    [37.1450, -88.4880],
+    [37.1420, -88.5380],
+    [37.1400, -88.5980],
+    [37.1420, -88.6580],
+    [37.1460, -88.7120],
+    [37.1500, -88.7480], // Paducah (Mile 935)
+    [37.1480, -88.7980],
+    [37.1420, -88.8480],
+    [37.1280, -88.8920],
+    [37.1120, -88.9380],
+    [37.0920, -88.9820],
+    [37.0680, -89.0220],
+    [37.0480, -89.0580],
+    [37.0280, -89.0980],
+    [37.0120, -89.1380],
+    [37.0050, -89.1620],
+    [37.0000, -89.1700]  // Cairo - Mile 981 (mouth)
+  ];
 
-  // Maysville to Meldahl
-  [38.6500, -83.8000], [38.6700, -83.8300], [38.6950, -83.8600], [38.7250, -83.8900],
-  [38.7550, -83.9300], [38.7750, -83.9800], [38.7850, -84.0400], [38.7850, -84.0800],
-  [38.7800, -84.1000], // Meldahl L&D
-
-  // Meldahl to Cincinnati
-  [38.7850, -84.1500], [38.8000, -84.2100], [38.8250, -84.2800], [38.8600, -84.3500],
-  [38.9000, -84.4100], [38.9450, -84.4600], [38.9950, -84.4950], [39.0500, -84.5100],
-  [39.1000, -84.5100], // Cincinnati
-
-  // Cincinnati to Markland
-  [39.1200, -84.5500], [39.1200, -84.6000], [39.1100, -84.6600], [39.0900, -84.7200],
-  [39.0600, -84.7800], [39.0200, -84.8400], [38.9700, -84.8900], [38.9100, -84.9200],
-  [38.8500, -84.9350], [38.7900, -84.9400], // Markland L&D
-
-  // Markland to McAlpine (Louisville)
-  [38.7300, -84.9600], [38.6650, -85.0000], [38.5950, -85.0600], [38.5250, -85.1400],
-  [38.4600, -85.2400], [38.4000, -85.3600], [38.3500, -85.4900], [38.3100, -85.6300],
-  [38.2850, -85.7200], [38.2700, -85.7900], [38.2600, -85.8000], // McAlpine L&D
-
-  // McAlpine to Cannelton
-  [38.2400, -85.8500], [38.2100, -85.9200], [38.1800, -86.0000], [38.1500, -86.0900],
-  [38.1200, -86.1900], [38.0950, -86.3000], [38.0750, -86.4200], [38.0600, -86.5400],
-  [38.0350, -86.6200], [38.0000, -86.6900], [37.9600, -86.7300], [37.9100, -86.7500], // Cannelton L&D
-
-  // Cannelton to Newburgh
-  [37.8900, -86.7900], [37.8750, -86.8500], [37.8650, -86.9200], [37.8600, -87.0000],
-  [37.8650, -87.0900], [37.8750, -87.1800], [37.8900, -87.2700], [37.9100, -87.3400],
-  [37.9300, -87.3800], // Newburgh L&D
-
-  // Newburgh to Smithland
-  [37.9200, -87.4400], [37.9000, -87.5100], [37.8700, -87.5800], [37.8300, -87.6500],
-  [37.7800, -87.7200], [37.7200, -87.7900], [37.6500, -87.8500], [37.5700, -87.9000],
-  [37.4800, -87.9500], [37.3800, -88.0000], [37.2800, -88.1000], [37.2000, -88.2500],
-  [37.1700, -88.3500], [37.1500, -88.4400], // Smithland L&D
-];
-
-export default function handler(req, res) {
-  // Set aggressive caching headers (1 year)
-  res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-  res.setHeader('Content-Type', 'application/json');
-
-  return res.status(200).json({
-    success: true,
-    elements: [
-      {
+    return res.status(200).json({
+      success: true,
+      source: 'Static navigation waypoints (USGS/OSM unavailable)',
+      elements: [{
         type: 'way',
         name: 'Ohio River',
-        coordinates: ACCURATE_OHIO_RIVER_PATH,
-      },
-    ],
-  });
+        coordinates: navigationWaypoints,
+        color: '#06b6d4',
+        weight: 4,
+        opacity: 0.9
+      }]
+    });
+  }
 }

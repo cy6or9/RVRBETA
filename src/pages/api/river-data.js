@@ -1104,29 +1104,25 @@ export default async function handler(req, res) {
       }
     }
     
-    // If NOAA failed, generate synthetic forecast from recent trend  
-    if (!prediction || prediction.length === 0) {
-      console.log(`[FORECAST] NOAA forecast unavailable for ${ahpsId}`);
-      console.log(`[FORECAST] Attempting synthetic fallback using historical trend...`);
-      // Try higher-fidelity regression first
-      const reg = generateRegressionForecastFromIV(historyPts, observed, 7);
-      if (reg && reg.length > 0) {
-        prediction = reg;
-        forecastSource = "Trend";
-        forecastType = "Projected";
+    // If NOAA failed, generate synthetic forecast from historical trend
+    if ((!prediction || prediction.length === 0) && historyDaily.length >= 3) {
+      console.log(`[FORECAST] NOAA forecast unavailable for ${ahpsId || site} — generating synthetic forecast`);
+      
+      // Try regression-based forecast first (higher fidelity if we have enough IV points)
+      let synthetic = generateRegressionForecastFromIV(historyPts, observed, 7);
+      
+      if (!synthetic || synthetic.length < 3) {
+        // Fallback to trend-based projection
+        synthetic = generateSyntheticForecast(historyDaily, 7);
+      }
+      
+      if (synthetic && synthetic.length > 0) {
+        prediction = synthetic;
+        forecastSource = "Projected";
+        forecastType = "Trend-based";
         forecastCoverageDays = prediction.length;
-        forecastCoverageNote = `Regression-based projection (${prediction.length} days) — NOAA forecast unavailable`;
-        console.log(`[FORECAST] Using regression forecast: ${prediction.length} points`);
-      } else {
-        const synth = generateSyntheticForecast(historyDaily);
-        if (synth && synth.length > 0) {
-          prediction = synth;
-          forecastSource = "Trend";
-          forecastType = "Projected";
-          forecastCoverageDays = prediction.length;
-          forecastCoverageNote = `Trend-based projection (${prediction.length} days) — NOAA forecast unavailable`;
-          console.log(`[FORECAST] Using synthetic forecast: ${prediction.length} points`);
-        }
+        forecastCoverageNote = `Trend projection based on recent ${historyDaily.length}-day history. NOAA forecasts unavailable.`;
+        console.log(`[FORECAST] Synthetic forecast generated: ${prediction.length} points`);
       }
     }
 
@@ -1194,7 +1190,7 @@ export default async function handler(req, res) {
       extractor: extractorDebug || null,
       corrected: undefined, // filled below if applicable
       correctionDelta: undefined,
-      projectionMethod: forecastType === "Projected" && prediction?.length ? (forecastCoverageNote?.startsWith("Regression") ? "regression72h" : "trend-daily-high") : undefined,
+      projectionMethod: forecastType === "Trend-based" && prediction?.length ? (forecastCoverageNote?.includes("Regression") || forecastSource === "Projected" ? "regression72h" : "trend-daily-high") : undefined,
     };
 
     if (forecastType === "Official" && Array.isArray(prediction) && prediction.length) {
@@ -1212,6 +1208,9 @@ export default async function handler(req, res) {
     // Ensure we never exceed 7 points for either series
     const historyOut = historyDaily.slice(-7);
     const predictionOut = Array.isArray(prediction) ? prediction.slice(0, 7) : [];
+    
+    console.log(`[FORECAST-FINAL] Returning prediction array with ${predictionOut.length} points`);
+    console.log(`[FORECAST-FINAL] Prediction data:`, JSON.stringify(predictionOut));
 
     return res.status(200).json({
       location,

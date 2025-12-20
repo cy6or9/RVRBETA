@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { ohioRiverLocks } from "@/lib/locks";
 
 /**
  * LockDamMap Component
@@ -22,29 +23,7 @@ export default function LockDamMap() {
   const [loading, setLoading] = useState(true);
   const [lockData, setLockData] = useState(null);
   const [error, setError] = useState(null);
-
-  // Ohio River locks (upstream to downstream) - mainstem only
-  const locks = [
-    { id: 1, name: "Emsworth L&D", lat: 40.51, lon: -80.08, riverMile: 6.2 },
-    { id: 2, name: "Dashields L&D", lat: 40.52, lon: -80.20, riverMile: 13.3 },
-    { id: 3, name: "Montgomery L&D", lat: 40.64, lon: -80.40, riverMile: 31.7 },
-    { id: 4, name: "New Cumberland L&D", lat: 40.51, lon: -80.65, riverMile: 54.4 },
-    { id: 5, name: "Pike Island L&D", lat: 40.10, lon: -80.70, riverMile: 84.2 },
-    { id: 6, name: "Hannibal L&D", lat: 39.66, lon: -80.86, riverMile: 126.4 },
-    { id: 7, name: "Willow Island L&D", lat: 39.36, lon: -81.26, riverMile: 161.7 },
-    { id: 8, name: "Belleville L&D", lat: 39.01, lon: -81.75, riverMile: 204.0 },
-    { id: 9, name: "Racine L&D", lat: 38.93, lon: -82.12, riverMile: 237.5 },
-    { id: 10, name: "Robert C. Byrd L&D", lat: 38.67, lon: -82.17, riverMile: 279.2 },
-    { id: 11, name: "Greenup L&D", lat: 38.57, lon: -82.84, riverMile: 341.0 },
-    { id: 12, name: "Captain A. Meldahl L&D", lat: 38.78, lon: -84.10, riverMile: 436.2 },
-    { id: 13, name: "Markland L&D", lat: 38.78, lon: -84.94, riverMile: 531.5 },
-    { id: 14, name: "McAlpine L&D", lat: 38.27, lon: -85.77, riverMile: 604.5 },
-    { id: 15, name: "Cannelton L&D", lat: 37.91, lon: -86.74, riverMile: 720.7 },
-    { id: 16, name: "Newburgh L&D", lat: 37.93, lon: -87.38, riverMile: 776.1 },
-    { id: 17, name: "J.T. Myers L&D", lat: 37.92, lon: -87.86, riverMile: 846.0 },
-    { id: 18, name: "Smithland L&D", lat: 37.15, lon: -88.44, riverMile: 918.5 },
-    { id: 19, name: "Olmsted L&D", lat: 37.18, lon: -89.05, riverMile: 964.4 },
-  ];
+  const locks = ohioRiverLocks;
 
   useEffect(() => {
     // Fetch USACE lock data (would integrate real API)
@@ -55,16 +34,31 @@ export default function LockDamMap() {
         // TODO: Replace with actual USACE API call
         // Format: GET https://api.usace.army.mil/locks/{lockId}/queue or similar
         
-        // Mock data structure for demo
-        const mockData = locks.map((lock, idx) => ({
-          ...lock,
-          queueLength: Math.floor(Math.random() * 5),
-          lastTowPassage: new Date(Date.now() - Math.random() * 3600000).toISOString(),
-          towsLast24h: Math.floor(Math.random() * 20) + 1,
-          averageWaitTime: Math.floor(Math.random() * 240) + 30, // minutes
-          direction: Math.random() > 0.5 ? "upstream" : "downstream",
-          congestion: Math.random() * 100, // 0-100 congestion score
-        }));
+        // Mock data structure for demo - using same deterministic logic as map markers
+        // Add timestamp to generate slightly different data on each update
+        const timestamp = Date.now();
+        const mockData = locks.map((lock, idx) => {
+          // Use lock ID + timestamp to generate time-varying pseudo-random values
+          const baseHash = (lock.riverMile * 17 + lock.lat * 13 + lock.lon * 7) % 100;
+          const timeVariation = Math.floor(timestamp / 300000) % 10; // Changes every 5 minutes
+          const lockHash = (baseHash + timeVariation) % 100;
+          const queueLength = Math.floor((lockHash * 0.05) % 5);
+          const congestion = lockHash;
+          const waitTime = Math.floor(30 + (lockHash * 2.4) % 210);
+          const towsLast24h = Math.floor(1 + (lockHash * 0.2) % 20);
+          const direction = lockHash > 50 ? 'upstream' : 'downstream';
+          const lastPassage = new Date(Date.now() - (lockHash * 36000));
+          
+          return {
+            ...lock,
+            queueLength,
+            lastTowPassage: lastPassage.toISOString(),
+            towsLast24h,
+            averageWaitTime: waitTime,
+            direction,
+            congestion,
+          };
+        });
 
         setLockData(mockData);
         setError(null);
@@ -77,6 +71,13 @@ export default function LockDamMap() {
     };
 
     initializeLockData();
+    
+    // Auto-refresh every 5 minutes to keep data fresh (matches map marker update frequency)
+    const refreshInterval = setInterval(() => {
+      initializeLockData();
+    }, 300000); // 5 minutes
+    
+    return () => clearInterval(refreshInterval);
   }, []);
 
   if (loading) {

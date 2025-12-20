@@ -11,6 +11,7 @@ interface RiverBottomBarProps {
   // Weather basics
   tempF?: number | null;
   windSpeedMph?: number | null;
+  windGustMph?: number | null;
   windDirDeg?: number | null;
   conditionLabel?: string | null; // e.g. "Light Rain"
 
@@ -34,6 +35,7 @@ export function RiverBottomBar({
   locationName,
   tempF,
   windSpeedMph,
+  windGustMph,
   windDirDeg,
   conditionLabel,
   precipIn,
@@ -46,6 +48,10 @@ export function RiverBottomBar({
   const displayWind =
     windSpeedMph != null && !Number.isNaN(windSpeedMph)
       ? `${windSpeedMph.toFixed(1)} mph`
+      : "— mph";
+  const displayGust =
+    windGustMph != null && !Number.isNaN(windGustMph)
+      ? `${windGustMph.toFixed(1)} mph`
       : "— mph";
   const displayCond = conditionLabel || "—";
 
@@ -73,10 +79,15 @@ export function RiverBottomBar({
             )}
             <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
               <span className="text-lg font-semibold">{displayTemp}</span>
-              <span className="text-muted-foreground flex items-center gap-1">
-                <span>💨</span>
-                <span>{displayWind}</span>
-              </span>
+              <div className="text-muted-foreground flex flex-col gap-0.5">
+                <span className="flex items-center gap-1">
+                  <span>💨</span>
+                  <span>{displayWind}</span>
+                </span>
+                <span className="text-[0.65rem] text-muted-foreground/80 ml-6">
+                  Gust: {displayGust}
+                </span>
+              </div>
             </div>
             <div className="text-muted-foreground text-[0.75rem]">
               {displayCond}

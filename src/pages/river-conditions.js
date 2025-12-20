@@ -1,6 +1,9 @@
 import { useState, useEffect, useRef } from "react";
 import Header from "@/components/Header";
 import Footer from "@/components/Footer";
+import LockDamMap from "@/components/LockDamMap";
+import OhioRiverActivityMap from "@/components/OhioRiverActivityMap";
+import { ohioRiverLocks } from "@/lib/locks";
 
 /* ---------------------------------------------------
    Station List (Ohio River full chain)
@@ -637,6 +640,10 @@ export default function RiverConditions() {
   const [weather, setWeather] = useState(null);
   const [aqi, setAqi] = useState(null);
   const [findMeInfo, setFindMeInfo] = useState(null);
+  const [userLocation, setUserLocation] = useState(null); // Track user location for map
+  const [userCityState, setUserCityState] = useState(null); // User's city and state
+  const [mapType, setMapType] = useState("marine"); // "marine", "lock", or "topo"
+  const [showLockActivityDropdown, setShowLockActivityDropdown] = useState(false);
 
   const [wxLoc, setWxLoc] = useState({
     lat: defaultStation.lat,
@@ -707,15 +714,27 @@ export default function RiverConditions() {
   async function loadWeather(lat, lon) {
     try {
       const res = await fetch(
-        `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true&hourly=precipitation_probability&forecast_days=1&timezone=auto`
+          `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true&hourly=precipitation_probability,windgusts_10m&daily=temperature_2m_max,temperature_2m_min&forecast_days=1&timezone=America/Chicago`
       );
       if (!res.ok) throw new Error("Weather error");
       const json = await res.json();
       const cw = json.current_weather;
 
+      // Calculate today's high wind gust from hourly data
+      const todayWindGusts = json.hourly?.windgusts_10m || [];
+      const maxWindGustKmh = todayWindGusts.length > 0 ? Math.max(...todayWindGusts.filter(g => g != null)) : cw.windspeed;
+      const maxWindGustMph = maxWindGustKmh * 0.621371;
+
+      const tempHighC = json.daily?.temperature_2m_max?.[0];
+      const tempLowC = json.daily?.temperature_2m_min?.[0];
+
       const w = {
         tempF: cw.temperature * 1.8 + 32,
+        tempHighF: tempHighC ? (tempHighC * 1.8 + 32) : null,
+        tempLowF: tempLowC ? (tempLowC * 1.8 + 32) : null,
         windMph: cw.windspeed * 0.621371,
+        windGustMph: (cw.windgusts || cw.windspeed) * 0.621371,
+        windGustHighMph: maxWindGustMph, // Today's high wind gust
         windDir: windDirLabel(cw.winddirection),
         windDeg: cw.winddirection,
         precip: json.hourly?.precipitation_probability?.[0] ?? 0,
@@ -759,6 +778,40 @@ export default function RiverConditions() {
     loadAQI(wxLoc.lat, wxLoc.lon);
   }, [wxLoc]);
 
+  // Cache user location on page unload, disconnect, or offline
+  useEffect(() => {
+    const cacheLocation = () => {
+      if (userLocation && userCityState) {
+        const locationCache = {
+          lat: userLocation.lat,
+          lon: userLocation.lon,
+          cityState: userCityState,
+          timestamp: Date.now()
+        };
+        localStorage.setItem('cachedUserLocation', JSON.stringify(locationCache));
+      }
+    };
+
+    // Cache on beforeunload (page close/refresh)
+    window.addEventListener('beforeunload', cacheLocation);
+    
+    // Cache on offline
+    window.addEventListener('offline', cacheLocation);
+    
+    // Cache on visibility change (tab switch, minimize)
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        cacheLocation();
+      }
+    });
+
+    return () => {
+      window.removeEventListener('beforeunload', cacheLocation);
+      window.removeEventListener('offline', cacheLocation);
+      document.removeEventListener('visibilitychange', cacheLocation);
+    };
+  }, [userLocation, userCityState]);
+
   const findDownstreamStation = (userLat, userLon, stations) => {
   if (!Array.isArray(stations) || stations.length === 0) return null;
 
@@ -800,25 +853,10 @@ export default function RiverConditions() {
 const buildFindMeInfo = (userLat, userLon, station) => {
   if (!station) return null;
 
-  let distanceText = "";
-
-  // Prefer river miles
-  if (
-    typeof station.riverMile === "number" &&
-    typeof station.nearestRiverMile === "number"
-  ) {
-    const delta = station.riverMile - station.nearestRiverMile;
-    if (delta > 0) {
-      distanceText = `${delta.toFixed(1)} river miles downstream`;
-    }
-  }
-
-  // Fallback: straight-line miles
-  if (!distanceText && typeof station.lat === "number") {
-    const km = distKm(userLat, userLon, station.lat, station.lon);
-    const miles = kmToMiles(km);
-    distanceText = `${miles.toFixed(1)} miles downstream`;
-  }
+  // Calculate straight-line distance to downstream station
+  const km = distKm(userLat, userLon, station.lat, station.lon);
+  const miles = kmToMiles(km);
+  const distanceText = `${miles.toFixed(1)} miles downstream`;
 
   return {
     label: `📍 You are upstream of ${station.name}`,
@@ -829,52 +867,174 @@ const buildFindMeInfo = (userLat, userLon, station) => {
   /* -------------------- LOCATE ME ----------------------- */
 
   const locateMe = () => {
-  if (!navigator.geolocation) {
-    alert("Geolocation is not supported by this browser.");
-    return;
-  }
-
-  navigator.geolocation.getCurrentPosition(
-    ({ coords }) => {
-      const userLat = coords.latitude;
-      const userLon = coords.longitude;
-
-      // Center map on user
-      setMapCenter({ lat: userLat, lon: userLon });
-
-      // Weather follows user
-      setWxLoc({ lat: userLat, lon: userLon });
-
-      // 🔥 THIS IS THE IMPORTANT PART
-      const downstreamStation = findDownstreamStation(
-  userLat,
-  userLon,
-  stations
-);
-
-if (downstreamStation) {
-  setSelected(downstreamStation);
-
-  const info = buildFindMeInfo(
-    userLat,
-    userLon,
-    downstreamStation
-  );
-
-  setFindMeInfo(info);
-}
-    },
-    (err) => {
-      console.error("Geolocation error:", err);
-      alert("Unable to get location.");
-    },
-    {
-      enableHighAccuracy: true,
-      timeout: 12000,
-      maximumAge: 60_000,
+    // If Find Me is already active, toggle it off
+    if (userLocation) {
+      // Clear Find Me state
+      setUserLocation(null);
+      setUserCityState(null);
+      setFindMeInfo(null);
+      
+      // Find nearest station to the river center and snap to it
+      const nearestStation = findDownstreamStation(37.77, -87.5747, stations);
+      if (nearestStation) {
+        setSelected(nearestStation);
+        setMapCenter({ lat: nearestStation.lat, lon: nearestStation.lon });
+        setWxLoc({ lat: nearestStation.lat, lon: nearestStation.lon });
+      }
+      
+      return;
     }
-  );
-};
+    
+    // Otherwise, activate Find Me
+    if (!navigator.geolocation) {
+      alert("Geolocation is not supported by this browser.");
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      async ({ coords }) => {
+        const userLat = coords.latitude;
+        const userLon = coords.longitude;
+
+        // Center map on user
+        setMapCenter({ lat: userLat, lon: userLon });
+        
+        // Store user location for map component
+        setUserLocation({ lat: userLat, lon: userLon });
+
+        // Weather follows user
+        setWxLoc({ lat: userLat, lon: userLon });
+
+        // Try to load cached location first
+        try {
+          const cached = localStorage.getItem('cachedUserLocation');
+          if (cached) {
+            const locationCache = JSON.parse(cached);
+            // If cached location is within 0.1 degrees (~7 miles) of current location and less than 7 days old
+            const cacheDist = Math.sqrt(
+              Math.pow(locationCache.lat - userLat, 2) + 
+              Math.pow(locationCache.lon - userLon, 2)
+            );
+            const cacheAge = Date.now() - (locationCache.timestamp || 0);
+            const sevenDays = 7 * 24 * 60 * 60 * 1000;
+            
+            if (cacheDist < 0.1 && cacheAge < sevenDays) {
+              console.log('Using cached location:', locationCache.cityState);
+              if (locationCache.cityState) {
+                setUserCityState(locationCache.cityState);
+              }
+              // Load cached findMeInfo for instant display
+              if (locationCache.findMeInfo) {
+                setFindMeInfo(locationCache.findMeInfo);
+                console.log('Using cached findMeInfo:', locationCache.findMeInfo);
+              }
+            }
+          }
+        } catch (err) {
+          console.error('Error loading cached location:', err);
+        }
+
+        // Reverse geocode to get city and state using server-side API
+        console.log('Starting reverse geocode for:', userLat, userLon);
+        let geocodeSuccess = false;
+        
+        try {
+          const geocodeUrl = `/api/geocode?lat=${userLat}&lon=${userLon}`;
+          console.log('Geocode URL:', geocodeUrl);
+          const response = await fetch(geocodeUrl);
+          
+          if (!response.ok) {
+            throw new Error(`Geocoding failed: ${response.status}`);
+          }
+          
+          const data = await response.json();
+          console.log('Geocode response:', data);
+          
+          if (data && data.success && data.location) {
+            setUserCityState(data.location);
+            console.log('User location set to:', data.location);
+            geocodeSuccess = true;
+          } else {
+            console.log('Could not extract location from geocoding data');
+          }
+        } catch (error) {
+          console.error('Error fetching location name:', error);
+        }
+        
+        // If geocoding failed, the server-side API already tried all fallbacks
+        // Just log if we still don't have a location
+        if (!geocodeSuccess && !userCityState) {
+          console.warn('All geocoding attempts failed, no location available');
+        }
+
+        // 🔥 THIS IS THE IMPORTANT PART
+        const downstreamStation = findDownstreamStation(
+          userLat,
+          userLon,
+          stations
+        );
+
+        if (downstreamStation) {
+          setSelected(downstreamStation);
+
+          const info = buildFindMeInfo(
+            userLat,
+            userLon,
+            downstreamStation
+          );
+
+          setFindMeInfo(info);
+          
+          // Cache the location if geocoding was successful
+          // Use setTimeout to ensure React state has updated
+          if (geocodeSuccess) {
+            setTimeout(() => {
+              // Re-fetch from geocoding API to get fresh data for cache
+              const cacheGeocodeUrl = `/api/geocode?lat=${userLat}&lon=${userLon}`;
+              fetch(cacheGeocodeUrl).then(r => r.json()).then(data => {
+                if (data && data.success && data.location) {
+                  const locationCache = {
+                    lat: userLat,
+                    lon: userLon,
+                    cityState: data.location,
+                    findMeInfo: info,
+                    timestamp: Date.now()
+                  };
+                  localStorage.setItem('cachedUserLocation', JSON.stringify(locationCache));
+                  console.log('Cached location:', locationCache);
+                }
+              }).catch(err => console.error('Cache update failed:', err));
+            }, 500);
+          }
+        }
+      },
+      (err) => {
+        console.error("Geolocation error:", err);
+        let errorMsg = "Unable to get location.";
+        
+        switch(err.code) {
+          case err.PERMISSION_DENIED:
+            errorMsg = "Location access denied. Please enable location permissions in your browser settings.";
+            break;
+          case err.POSITION_UNAVAILABLE:
+            errorMsg = "Location information is unavailable. Please check your device's location settings.";
+            break;
+          case err.TIMEOUT:
+            errorMsg = "Location request timed out. Please try again.";
+            break;
+          default:
+            errorMsg = `Unable to get location: ${err.message || 'Unknown error'}`;
+        }
+        
+        alert(errorMsg);
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 12000,
+        maximumAge: 60_000,
+      }
+    );
+  };
 
   /* -------------------- DERIVED UI VALUES -------------------- */
 
@@ -933,14 +1093,14 @@ if (downstreamStation) {
       <Header />
 
       {/* TOP BAR */}
-      <section className="sticky top-0 z-50 shadow-md bg-slate-900/95 backdrop-blur">
+      <section className="shadow-md bg-slate-900/95 backdrop-blur">
         <RiverHazardBar hazardCode={hazardCode} />
 
-        <div className="max-w-6xl mx-auto px-4 pb-3">
-          <div className="flex flex-col lg:flex-row items-stretch justify-between gap-6">
+        <div className="max-w-6xl mx-auto px-4 py-1.5">
+          <div className="flex flex-col lg:flex-row items-stretch justify-between gap-4">
             {/* LEFT: Station selector */}
             <div className="flex-1 min-w-[220px]">
-              <div className="flex items-center gap-2 mt-2">
+              <div className="flex items-center gap-2 mt-1">
                 <label className="text-sm">Station:</label>
                 <select
                   value={selected.id}
@@ -961,7 +1121,7 @@ if (downstreamStation) {
                 </select>
               </div>
 
-              <div className="mt-3">
+              <div className="mt-2">
                 <p className="text-sm font-semibold uppercase">{data?.location ?? selected.name}</p>
 
                 <p className="text-sm">
@@ -979,9 +1139,12 @@ if (downstreamStation) {
               <RiverLevelIndicator history={data?.history} hazardCode={hazardCode} />
               {findMeInfo && (
                 <div className="mt-2 text-xs text-white/70">
-                  <div>{findMeInfo.label}</div>
+                  <div className="flex items-center gap-2">
+                    <span className="inline-block w-2 h-2 rounded-full bg-cyan-400"></span>
+                    <span>{findMeInfo.label}</span>
+                  </div>
                   {findMeInfo.distance && (
-                    <div className="opacity-80">{findMeInfo.distance}</div>
+                    <div className="opacity-80 ml-4">{findMeInfo.distance}</div>
                   )}
                 </div>
               )}
@@ -1063,45 +1226,136 @@ if (downstreamStation) {
         </div>
       </section>
 
-      {/* MAP */}
-      <iframe src={mapSrc} width="100%" height="500" frameBorder="0" className="border-none" />
+      {/* MAP - Marine Traffic, River Activity, Topography, or Dark Theme based on mapType */}
+      {mapType === "marine" ? (
+        <iframe src={mapSrc} width="100%" height="500" frameBorder="0" className="border-none" title="Marine Traffic Map" />
+      ) : mapType === "topo" ? (
+        <OhioRiverActivityMap 
+          locks={ohioRiverLocks}
+          selectedLockId={selected?.id}
+          userLocation={userLocation}
+          mapStyle="topo"
+        />
+      ) : mapType === "dark" ? (
+        <OhioRiverActivityMap 
+          locks={ohioRiverLocks}
+          selectedLockId={selected?.id}
+          userLocation={userLocation}
+          mapStyle="dark"
+        />
+      ) : (
+        <OhioRiverActivityMap 
+          locks={ohioRiverLocks}
+          selectedLockId={selected?.id}
+          userLocation={userLocation}
+        />
+      )}
 
       {/* BOTTOM INFO BAR */}
       <section className="w-full border-t border-white/20 bg-slate-900/95">
-        <div className="max-w-6xl mx-auto px-4 py-3 flex flex-col sm:flex-row items-center justify-between gap-6">
-          <div className="text-sm">
-            {weather && (
-              <>
-                <p className="font-semibold">{selected.name}</p>
-                <p>
-                  🌡 {weather.tempF.toFixed(1)}°F • 💨 {weather.windMph.toFixed(1)} mph
-                </p>
-              </>
-            )}
+        <div className="max-w-6xl mx-auto px-4 py-2 flex flex-col sm:flex-row items-center justify-between gap-6">
+          <div className="flex items-center gap-3 relative">
+            <div className="flex flex-col gap-1 relative">
+              {/* Map Type Selector Dropdown */}
+              <select
+                value={mapType}
+                onChange={(e) => setMapType(e.target.value)}
+                className="text-xs px-2 py-1 bg-slate-700/50 border border-cyan-500/40 rounded text-cyan-200 hover:border-cyan-500 appearance-none cursor-pointer"
+                style={{
+                  backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' stroke='%2306b6d4' strokeWidth='2' viewBox='0 0 24 24'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`,
+                  backgroundRepeat: 'no-repeat',
+                  backgroundPosition: 'right 4px center',
+                  backgroundSize: '14px',
+                  paddingRight: '20px',
+                }}
+                title="Switch between map types"
+              >
+                <option value="marine">🗺️ Marine Traffic</option>
+                <option value="lock">🔒 River Activity</option>
+                <option value="topo">⛰️ Topography</option>
+                <option value="dark">🌙 Dark Theme</option>
+              </select>
+
+              {/* Lock Activity Dropdown Toggle */}
+              <button
+                onClick={() => setShowLockActivityDropdown(!showLockActivityDropdown)}
+                className="text-xs px-2 py-1 bg-slate-700/50 border border-cyan-500/40 rounded text-cyan-200 hover:border-cyan-500 transition-colors flex items-center justify-between gap-2 text-left"
+                title="Toggle Lock Activity data"
+              >
+                Lock Activity
+                <span className={`transition-transform ${showLockActivityDropdown ? 'rotate-180' : ''}`} style={{
+                  display: 'inline-block',
+                  width: '14px',
+                  height: '14px',
+                  background: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' stroke='%2306b6d4' strokeWidth='2' viewBox='0 0 24 24'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`,
+                  backgroundSize: 'contain',
+                }}>
+                </span>
+              </button>
+
+            </div>
+
+            <div className="text-sm">
+              {weather && (
+                <>
+                  <p className="font-semibold whitespace-nowrap overflow-hidden text-ellipsis">
+                    {userCityState || selected.name}
+                  </p>
+                  <div className="flex items-start gap-3">
+                    <div className="flex flex-col">
+                      <p>🌡 {weather.tempF.toFixed(1)}°F</p>
+                      {weather.tempHighF && weather.tempLowF && (
+                        <p className="text-xs opacity-75" style={{ marginLeft: '1.25rem' }}>
+                          H: {weather.tempHighF.toFixed(0)}° L: {weather.tempLowF.toFixed(0)}°
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex flex-col">
+                      <p>💨 {weather.windMph.toFixed(1)} mph</p>
+                      <p className="text-xs opacity-75" style={{ marginLeft: '1.25rem' }}>
+                        {weather.windGustHighMph.toFixed(1)} mph
+                      </p>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
 
           {weather && <WindCompass direction={weather.windDir} degrees={weather.windDeg} />}
 
           <button
             onClick={locateMe}
-            className="px-4 py-2 bg-cyan-600 hover:bg-cyan-700 rounded-lg font-semibold shadow flex items-center gap-2 text-sm"
+            className={`px-4 py-2 rounded-lg font-semibold shadow flex items-center gap-2 text-sm ${
+              userLocation 
+                ? 'bg-orange-600 hover:bg-orange-700' 
+                : 'bg-cyan-600 hover:bg-cyan-700'
+            }`}
           >
             <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2">
               <circle cx="12" cy="12" r="3" />
               <path d="M12 2v4M12 18v4M4 12h4M16 12h4" />
             </svg>
-            Find Me
+            {userLocation ? 'Clear Location' : 'Find Me'}
           </button>
 
           <div className="text-xs text-right">
             <p className="font-semibold mb-1">Precipitation</p>
             <p>
-              {precipIcon} {precip.toFixed(0)}%
+              <span style={{ fontSize: '3em', lineHeight: 0.8, verticalAlign: 'middle' }}>{precipIcon}</span> {precip.toFixed(0)}%
             </p>
           </div>
         </div>
 
-        <div className="max-w-6xl mx-auto pb-3 px-4">
+        {/* Lock Activity Dropdown Panel */}
+        {showLockActivityDropdown && (
+          <div className="max-w-6xl mx-auto px-4 py-3 border-t border-white/10">
+            <LockDamMap />
+          </div>
+        )}
+
+        {/* Air Quality Scale */}
+        <div className="max-w-6xl mx-auto px-4 pb-2">
           <AirQualityScale aqi={aqi} />
         </div>
       </section>
