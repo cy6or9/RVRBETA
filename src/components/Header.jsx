@@ -66,7 +66,7 @@ export default function Header() {
             ) : (
               <button
                 onClick={loginWithGoogle}
-                className="text-xs text-muted-foreground hover:text-[hsl(142,70%,35%)] transition-colors"
+                className="text-xs text-foreground/70 hover:text-[hsl(142,70%,35%)] transition-colors"
               >
                 Login
               </button>

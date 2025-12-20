@@ -1,9 +1,11 @@
 import { useState, useEffect, useRef } from "react";
+import Link from "next/link";
 import Header from "@/components/Header";
 import Footer from "@/components/Footer";
 import LockDamMap from "@/components/LockDamMap";
 import OhioRiverActivityMap from "@/components/OhioRiverActivityMap";
 import { ohioRiverLocks } from "@/lib/locks";
+import { useAuth } from "@/context/AuthContext";
 
 /* ---------------------------------------------------
    Station List (Ohio River full chain)
@@ -642,7 +644,7 @@ export default function RiverConditions() {
   const [findMeInfo, setFindMeInfo] = useState(null);
   const [userLocation, setUserLocation] = useState(null); // Track user location for map
   const [userCityState, setUserCityState] = useState(null); // User's city and state
-  const [mapType, setMapType] = useState("marine"); // "marine", "lock", or "topo"
+  const [mapType, setMapType] = useState("lock"); // "marine", "lock", or "topo"
   const [showLockActivityDropdown, setShowLockActivityDropdown] = useState(false);
 
   const [wxLoc, setWxLoc] = useState({
@@ -651,6 +653,9 @@ export default function RiverConditions() {
   });
 
   const [mapCenter, setMapCenter] = useState({ lat: 37.77, lon: -87.5747 });
+
+  // Inline auth controls for page-level login visibility
+  const { isAdmin, loginWithGoogle, logout, loading } = useAuth();
 
   // Prevent “data disappears”: keep last good payloads
   const lastGoodRiverRef = useRef(null);
@@ -848,6 +853,35 @@ export default function RiverConditions() {
     .filter((s) => typeof s?.lat === "number" && s.lat < nearest.lat)
     .sort((a, b) => b.lat - a.lat)[0];
 
+
+                  {/* Inline Login/Admin controls */}
+                  <div className="mt-2 flex items-center justify-end gap-3 w-full">
+                    {loading ? (
+                      <span className="text-[10px] text-foreground/60">Checking login…</span>
+                    ) : isAdmin ? (
+                      <>
+                        <Link
+                          href="/admin"
+                          className="text-[10px] text-foreground/80 hover:text-[hsl(142,70%,35%)]"
+                        >
+                          Admin
+                        </Link>
+                        <button
+                          onClick={logout}
+                          className="text-[10px] text-muted-foreground hover:text-destructive"
+                        >
+                          Logout
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        onClick={loginWithGoogle}
+                        className="text-[10px] text-foreground/70 hover:text-[hsl(142,70%,35%)]"
+                      >
+                        Login
+                      </button>
+                    )}
+                  </div>
   return fallback || nearest;
 };
 const buildFindMeInfo = (userLat, userLon, station) => {
@@ -859,7 +893,7 @@ const buildFindMeInfo = (userLat, userLon, station) => {
   const distanceText = `${miles.toFixed(1)} miles downstream`;
 
   return {
-    label: `📍 You are upstream of ${station.name}`,
+    label: `You are upstream of ${station.name}`,
     distance: distanceText,
   };
 };
@@ -1270,10 +1304,10 @@ const buildFindMeInfo = (userLat, userLon, station) => {
                 }}
                 title="Switch between map types"
               >
-                <option value="marine">🗺️ Marine Traffic</option>
-                <option value="lock">🔒 River Activity</option>
+                <option value="lock">🚤 River Activity</option>
                 <option value="topo">⛰️ Topography</option>
-                <option value="dark">🌙 Dark Theme</option>
+                <option value="dark">🌙 Dark</option>
+                <option value="marine">🗺️ Marine Traffic</option>
               </select>
 
               {/* Lock Activity Dropdown Toggle */}

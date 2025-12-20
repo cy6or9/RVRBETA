@@ -259,7 +259,7 @@ export default function OhioRiverActivityMap({ locks = [], selectedLockId, userL
           <div style="background: #1e293b; color: white; padding: 12px; border-radius: 8px; max-width: 280px; font-size: 12px;">
             <h3 style="margin: 0 0 8px 0; color: #06b6d4; font-size: 14px;">${lock.name}</h3>
             <div style="border-bottom: 1px solid #475569; padding-bottom: 8px; margin-bottom: 8px;">
-              <div>📍 River Mile: ${lock.riverMile}</div>
+              <div> River Mile: ${lock.riverMile}</div>
               <div>🚢 Queue: <strong>${queueLength} tows</strong></div>
             </div>
             <div style="border-bottom: 1px solid #475569; padding-bottom: 8px; margin-bottom: 8px;">
@@ -417,7 +417,7 @@ export default function OhioRiverActivityMap({ locks = [], selectedLockId, userL
         <div style="background: #1e293b; color: white; padding: 12px; border-radius: 8px; max-width: 280px; font-size: 12px;">
           <h3 style="margin: 0 0 8px 0; color: #06b6d4; font-size: 14px;">${lock.name}</h3>
           <div style="border-bottom: 1px solid #475569; padding-bottom: 8px; margin-bottom: 8px;">
-            <div>📍 River Mile: ${lock.riverMile}</div>
+            <div> River Mile: ${lock.riverMile}</div>
             <div>🚢 Queue: <strong>${queueLength} tows</strong></div>
           </div>
           <div style="border-bottom: 1px solid #475569; padding-bottom: 8px; margin-bottom: 8px;">
@@ -553,12 +553,9 @@ export default function OhioRiverActivityMap({ locks = [], selectedLockId, userL
       />
 
       <div className="text-xs text-white/80 bg-slate-900/95 p-2.5 rounded border border-white/10">
-        <p className="font-semibold text-cyan-300 mb-1.5">Ohio River Activity Map</p>
-        <ul className="space-y-0.5 text-white/70 mb-1.5">
-          <li>🟢 <strong>Green:</strong> Light traffic (&lt;30% congestion)</li>
-          <li>🟡 <strong>Yellow:</strong> Moderate traffic (30-70% congestion)</li>
-          <li>🔴 <strong>Red:</strong> Heavy traffic (&gt;70% congestion)</li>
-        </ul>
+        <p className="font-semibold text-white mb-1.5">
+          Ohio River Activity Map | 🟢 Green: Light traffic (&lt;30% congestion) | 🟡 Yellow: Moderate traffic (30-70% congestion) | 🔴 Red: Heavy traffic (&gt;70% congestion)
+        </p>
         <p className="text-white/60 text-[10px] border-t border-white/10 pt-1.5">
           <strong>Data Source:</strong> U.S. Army Corps of Engineers (USACE) public lock logs. 
           This tracks infrastructure analytics—not individual vessels. 
