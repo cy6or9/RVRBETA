@@ -637,9 +637,10 @@ function AirQualityScale({ aqi }) {
 export default function RiverConditions() {
   const defaultStation = stations.find((s) => s.id === "03322420") ?? stations[0];
 
-  const { profile, saveMapPreferences, updateCachedRiverData, toggleFavorite } = useUserProfile();
+  const { profile, saveMapPreferences, updateCachedRiverData, updateCachedForecast, toggleFavorite } = useUserProfile();
 
   const [selected, setSelected] = useState(defaultStation);
+  const [favoritesOnly, setFavoritesOnly] = useState(false);
 
   const [data, setData] = useState(null);
   const [weather, setWeather] = useState(null);
@@ -1226,7 +1227,10 @@ export default function RiverConditions() {
                   }}
                   className="px-3 py-1 text-black rounded bg-white"
                 >
-                  {stations.map((s) => (
+                  {(favoritesOnly && profile?.favorites?.gauges?.length > 0
+                    ? stations.filter((s) => profile.favorites.gauges.includes(s.id))
+                    : stations
+                  ).map((s) => (
                     <option key={s.id} value={s.id}>
                       {s.name}
                     </option>
@@ -1246,6 +1250,16 @@ export default function RiverConditions() {
                     {profile?.favorites?.gauges?.includes(selected.id) ? "★" : "☆"}
                   </span>
                 </button>
+                {/* Favorites Only filter */}
+                <label className="flex items-center gap-1 text-xs text-white/80 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={favoritesOnly}
+                    onChange={(e) => setFavoritesOnly(e.target.checked)}
+                    className="cursor-pointer"
+                  />
+                  Favorites Only
+                </label>
               </div>
 
               <div className="mt-2">

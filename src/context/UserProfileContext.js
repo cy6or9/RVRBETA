@@ -209,6 +209,32 @@ export function UserProfileProvider({ children }) {
     [user]
   );
 
+  // Update cached forecast
+  const updateCachedForecast = useCallback(
+    async (forecast) => {
+      setProfile((prev) => ({
+        ...prev,
+        cachedData: {
+          ...prev.cachedData,
+          lastSeenForecast: forecast,
+          lastUpdatedForecast: new Date().toISOString(),
+        },
+      }));
+
+      if (user) {
+        try {
+          await updateUserProfile(user.uid, {
+            "cachedData.lastSeenForecast": forecast,
+            "cachedData.lastUpdatedForecast": new Date().toISOString(),
+          });
+        } catch (error) {
+          console.error("Error updating cached forecast:", error);
+        }
+      }
+    },
+    [user]
+  );
+
   // Update offline mode
   const updateOfflineSettings = useCallback(
     async (settings) => {
@@ -244,6 +270,7 @@ export function UserProfileProvider({ children }) {
     checkIsFavorite,
     togglePreferredStation,
     updateCachedRiverData,
+    updateCachedForecast,
     updateOfflineSettings,
     isLoggedIn: !!user,
   };
