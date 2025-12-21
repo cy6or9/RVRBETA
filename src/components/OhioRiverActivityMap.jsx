@@ -18,11 +18,13 @@ import { useEffect, useRef, useState } from 'react';
  * - Tow passage events
  */
 
-export default function OhioRiverActivityMap({ locks = [], selectedLockId, userLocation, onLockSelect, mapStyle = 'standard' }) {
+export default function OhioRiverActivityMap({ locks = [], stations = [], selectedLockId, userLocation, onLockSelect, mapStyle = 'standard' }) {
   const mapContainer = useRef(null);
   const map = useRef(null);
   const riverLinesRef = useRef([]); // Changed to array to hold multiple polylines
+  const riverCoordinatesRef = useRef([]); // Store all river coordinates for snapping
   const markersRef = useRef([]);
+  const cityMarkersRef = useRef([]);
   const userMarkerRef = useRef(null);
   const tileLayerRef = useRef(null);
   const [mapReady, setMapReady] = useState(false);
@@ -125,36 +127,65 @@ export default function OhioRiverActivityMap({ locks = [], selectedLockId, userL
           // Clear any existing river lines
           riverLinesRef.current.forEach(line => {
             if (map.current && line) {
-              map.current.removeLayer(line);
+              try {
+                map.current.removeLayer(line);
+              } catch (e) {
+                console.warn('[RIVER-MAP] Error removing layer:', e);
+              }
             }
           });
           riverLinesRef.current = [];
+          riverCoordinatesRef.current = []; // Reset coordinates
           
           // Process each element and create polylines
           elements.forEach((el, idx) => {
-            console.log(`[RIVER-MAP] Segment ${idx + 1}:`, {
-              name: el.name,
-              type: el.type,
-              coordCount: el.coordinates?.length,
-              color: el.color,
-              weight: el.weight
-            });
-            
-            if (el.type === 'way' && el.coordinates && Array.isArray(el.coordinates) && el.coordinates.length > 1) {
-              const line = L.polyline(el.coordinates, {
-                color: el.color || '#06b6d4',
-                weight: el.weight || 4,
-                opacity: el.opacity || 0.9,
-                lineCap: 'round',
-                lineJoin: 'round',
-              }).addTo(map.current);
+            try {
+              console.log(`[RIVER-MAP] Segment ${idx + 1}:`, {
+                name: el.name,
+                type: el.type,
+                coordCount: el.coordinates?.length,
+                color: el.color,
+                weight: el.weight
+              });
+              
+              if (el.type === 'way' && el.coordinates && Array.isArray(el.coordinates) && el.coordinates.length > 1) {
+                // Validate coordinates before creating polyline
+                const validCoords = el.coordinates.filter(coord => {
+                  return Array.isArray(coord) && coord.length >= 2 && 
+                    typeof coord[0] === 'number' && typeof coord[1] === 'number' &&
+                    isFinite(coord[0]) && isFinite(coord[1]);
+                });
 
-              riverLinesRef.current.push(line);
-              console.log(`[RIVER-MAP] ✓ Polyline ${idx + 1} created and added to map`);
-            } else {
-              console.warn('[RIVER-MAP] Skipping element - invalid data');
+                if (validCoords.length > 1) {
+                  // Store all river coordinates for city snapping
+                  riverCoordinatesRef.current.push(...validCoords);
+                  
+                  const line = L.polyline(validCoords, {
+                    color: el.color || '#06b6d4',
+                    weight: el.weight || 4,
+                    opacity: el.opacity || 0.9,
+                    lineCap: 'round',
+                    lineJoin: 'round',
+                  }).addTo(map.current);
+
+                  riverLinesRef.current.push(line);
+                  console.log(`[RIVER-MAP] ✓ Polyline ${idx + 1} created and added to map (${validCoords.length} valid coords)`);
+                } else {
+                  console.warn('[RIVER-MAP] Skipping element - not enough valid coordinates after filtering');
+                }
+              } else {
+                console.warn('[RIVER-MAP] Skipping element - invalid data');
+              }
+            } catch (segmentErr) {
+              console.error(`[RIVER-MAP] Error processing segment ${idx + 1}:`, segmentErr);
             }
           });
+          
+          console.log(`[RIVER-MAP] Stored ${riverCoordinatesRef.current.length} total river coordinates for city snapping`);
+          // Trigger city markers to refresh after river coordinates load
+          try {
+            setRefreshTrigger(prev => prev + 1);
+          } catch {}
           
           // Fit map to show all river segments on initial load
           if (!initialFitDone && riverLinesRef.current.length > 0) {
@@ -163,16 +194,23 @@ export default function OhioRiverActivityMap({ locks = [], selectedLockId, userL
               const group = L.featureGroup(riverLinesRef.current);
               const bounds = group.getBounds();
               
-              // Fit to entire Ohio River (Pittsburgh to Cairo) with appropriate zoom
-              map.current.fitBounds(bounds, { 
-                padding: [30, 30], // Smaller padding for better fit
-                maxZoom: 9, // Max zoom 9 to ensure entire river is visible
-                animate: false // No animation on initial load for immediate display
-              });
-              console.log('[RIVER-MAP] ✓ Map fitted to entire Ohio River bounds (Pittsburgh to Cairo)');
+              // Check if bounds are valid using Leaflet's method
+              if (bounds && bounds.isValid && bounds.isValid()) {
+                // Fit to entire Ohio River (Pittsburgh to Cairo) with appropriate zoom
+                map.current.fitBounds(bounds, { 
+                  padding: [30, 30], // Smaller padding for better fit
+                  maxZoom: 9, // Max zoom 9 to ensure entire river is visible
+                  animate: false // No animation on initial load for immediate display
+                });
+                console.log('[RIVER-MAP] ✓ Map fitted to entire Ohio River bounds (Pittsburgh to Cairo)');
+                setInitialFitDone(true);
+              } else {
+                console.warn('[RIVER-MAP] Bounds are not valid or empty, skipping fit');
+                setInitialFitDone(true);
+              }
+            } catch (fitErr) {
+              console.error('[RIVER-MAP] Error fitting bounds:', fitErr);
               setInitialFitDone(true);
-            } catch (e) {
-              console.error('[RIVER-MAP] Error fitting bounds:', e);
             }
           }
         })
@@ -448,7 +486,166 @@ export default function OhioRiverActivityMap({ locks = [], selectedLockId, userL
     });
   }, [locks, mapReady, onLockSelect, refreshTrigger]); // Added refreshTrigger dependency
 
-  // Handle zoom to selected lock
+  // Add city/township markers (non-L&D stations)
+  useEffect(() => {
+    if (!map.current || !window.L || !mapReady || !stations || stations.length === 0) return;
+    if (riverCoordinatesRef.current.length === 0) return; // Wait for river data
+    
+    const L = window.L;
+    
+    // Clear existing city markers
+    cityMarkersRef.current.forEach(marker => {
+      map.current.removeLayer(marker);
+    });
+    cityMarkersRef.current = [];
+    
+    // Filter out stations with "L&D" in their name (those are already shown as lock markers)
+    const cityStations = stations.filter(station => {
+      const hasLD = station && station.name && station.name.includes('L&D');
+      return !hasLD;
+    });
+    
+    console.log('[RIVER-MAP] City station filtering:', {
+      totalStations: stations.length,
+      stationSample: stations.slice(0, 3).map(s => ({ name: s?.name, hasLD: s?.name?.includes('L&D') })),
+      citiesAfterFilter: cityStations.length,
+      riverCoordinatesAvailable: riverCoordinatesRef.current.length
+    });
+    
+    // Helper function to find nearest river point
+    const findNearestRiverPoint = (lat, lon) => {
+      let nearestPoint = null;
+      let minDistance = Infinity;
+      
+      riverCoordinatesRef.current.forEach(coord => {
+        const distance = Math.sqrt(
+          Math.pow((coord[0] - lat) * 69, 2) + // 69 miles per degree latitude
+          Math.pow((coord[1] - lon) * 54 * Math.cos(lat * Math.PI / 180), 2) // longitude adjusted for latitude
+        );
+        
+        if (distance < minDistance) {
+          minDistance = distance;
+          nearestPoint = coord;
+        }
+      });
+      
+      return { point: nearestPoint, distance: minDistance };
+    };
+    
+    // Add city markers
+    cityStations.forEach((city) => {
+      // Find nearest river point to snap to
+      const { point: riverPoint, distance } = findNearestRiverPoint(city.lat, city.lon);
+      
+      if (!riverPoint || distance > 20) {
+        console.warn('[RIVER-MAP] City too far from river, skipping:', city.name, distance.toFixed(2), 'miles');
+        return; // Skip if no river point found or too far (>20 miles)
+      }
+      
+      // Use river point for marker placement (snap to river)
+      const [snapLat, snapLon] = riverPoint;
+      
+      // Create custom icon - half size of lock markers with dark background
+      const icon = L.divIcon({
+        html: `
+          <div style="
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 16px;
+            height: 16px;
+            background: #1e293b;
+            border: 2px solid #06b6d4;
+            border-radius: 50%;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.5);
+            cursor: pointer;
+          " title="${city.name}">
+            <img src="/city-hall-icon.svg" style="width: 10px; height: 10px;" alt="City" />
+          </div>
+        `,
+        iconSize: [16, 16],
+        iconAnchor: [8, 8],
+        popupAnchor: [0, -10],
+        className: 'city-marker',
+      });
+
+      // Add marker at snapped river position
+      const marker = L.marker([snapLat, snapLon], { icon }).addTo(map.current);
+      cityMarkersRef.current.push(marker);
+
+      // Create popup content with dark theme and placeholders for level/temp
+      const popupContent = `
+        <div style="background: #1e293b; color: white; padding: 12px; border-radius: 8px; max-width: 260px; font-size: 12px; border: 1px solid #475569;">
+          <h3 style="margin: 0 0 8px 0; color: #06b6d4; font-size: 14px; font-weight: bold;">🏛️ ${city.name}</h3>
+          <div style="border-bottom: 1px solid #475569; padding-bottom: 8px; margin-bottom: 8px;">
+            <div style="margin-bottom: 4px;">📍 River Mile: <strong>${city.riverMile || 'N/A'}</strong></div>
+            <div style="margin-bottom: 4px;">📊 Station ID: <strong>${city.id}</strong></div>
+          </div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; border-bottom: 1px solid #475569; padding-bottom: 8px; margin-bottom: 8px;">
+            <div>🌊 Level: <strong>—</strong></div>
+            <div>🌡 Temp: <strong>—</strong></div>
+          </div>
+          <div style="font-size: 11px; color: #94a3b8;">City monitoring station on Ohio River</div>
+        </div>
+      `;
+
+      marker.bindPopup(popupContent, {
+        maxWidth: 260,
+        className: 'city-popup',
+        closeButton: true,
+        autoPan: true
+      });
+
+      // Fetch level and temperature when popup opens
+      marker.on('popupopen', async () => {
+        try {
+          const levelUrl = `/api/river-data?site=${encodeURIComponent(city.id)}&lat=${city.lat}&lon=${city.lon}`;
+          const wxUrl = `/api/weather?lat=${city.lat}&lon=${city.lon}`;
+          const [levelRes, wxRes] = await Promise.allSettled([
+            fetch(levelUrl),
+            fetch(wxUrl)
+          ]);
+
+          let levelFt = null;
+          if (levelRes.status === 'fulfilled' && levelRes.value.ok) {
+            const j = await levelRes.value.json();
+            levelFt = typeof j?.observed === 'number' ? j.observed : null;
+          }
+          let tempF = null;
+          if (wxRes.status === 'fulfilled' && wxRes.value.ok) {
+            const wj = await wxRes.value.json();
+            tempF = typeof wj?.tempF === 'number' ? wj.tempF : (wj?.current?.tempF ?? null);
+          }
+
+          const updated = `
+            <div style="background: #1e293b; color: white; padding: 12px; border-radius: 8px; max-width: 260px; font-size: 12px; border: 1px solid #475569;">
+              <h3 style="margin: 0 0 8px 0; color: #06b6d4; font-size: 14px; font-weight: bold;">🏛️ ${city.name}</h3>
+              <div style="border-bottom: 1px solid #475569; padding-bottom: 8px; margin-bottom: 8px;">
+                <div style="margin-bottom: 4px;">📍 River Mile: <strong>${city.riverMile || 'N/A'}</strong></div>
+                <div style="margin-bottom: 4px;">📊 Station ID: <strong>${city.id}</strong></div>
+              </div>
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; border-bottom: 1px solid #475569; padding-bottom: 8px; margin-bottom: 8px;">
+                <div>🌊 Level: <strong>${levelFt != null ? `${levelFt.toFixed(2)} ft` : '—'}</strong></div>
+                <div>🌡 Temp: <strong>${tempF != null ? `${Math.round(tempF)} °F` : '—'}</strong></div>
+              </div>
+              <div style="font-size: 11px; color: #94a3b8;">City monitoring station on Ohio River</div>
+            </div>
+          `;
+          try { marker.setPopupContent(updated); } catch {}
+        } catch (e) {
+          console.warn('[RIVER-MAP] Popup data fetch failed for city', city.name, e);
+        }
+      });
+
+      // Notify parent if onClick is provided
+      marker.on('click', () => {
+        if (onLockSelect) onLockSelect(city.id);
+      });
+    });
+  }, [stations, mapReady, refreshTrigger, onLockSelect]);
+
+  // Handle zoom to selected lock OR city
   useEffect(() => {
     if (!map.current || !window.L || !mapReady || !selectedLockId) return;
     
@@ -456,21 +653,30 @@ export default function OhioRiverActivityMap({ locks = [], selectedLockId, userL
     if (prevSelectedLockIdRef.current === selectedLockId) return;
     prevSelectedLockIdRef.current = selectedLockId;
     
-    const selectedLock = locks.find(lock => lock.id === selectedLockId);
-    if (selectedLock) {
-      const L = window.L;
-      // Calculate bounds for 5 miles east and west (1 degree longitude ≈ 69 miles at equator, less at higher latitudes)
-      // At Ohio River latitude (~38°), 1 degree ≈ 54 miles, so 5 miles ≈ 0.093 degrees
-      const mileOffset = 0.093; // 5 miles in longitude degrees
-      const latOffset = 0.036; // Smaller vertical span to focus on river
-      const bounds = L.latLngBounds(
-        [selectedLock.lat - latOffset, selectedLock.lon - mileOffset],
-        [selectedLock.lat + latOffset, selectedLock.lon + mileOffset]
-      );
-      map.current.fitBounds(bounds, { padding: [30, 30], maxZoom: 12, animate: true, duration: 0.5 });
-      console.log('[RIVER-MAP] Zoomed to selected lock:', selectedLock.name);
+    // Look for city first, then lock
+    let selectedItem = Array.isArray(stations) ? stations.find(s => s.id === selectedLockId) : null;
+    if (!selectedItem) {
+      selectedItem = Array.isArray(locks) ? locks.find(lock => lock.id === selectedLockId) : null;
     }
-  }, [selectedLockId, locks, mapReady]);
+    
+    if (selectedItem) {
+      const L = window.L;
+      // Same zoom envelope as Find Me: about 5 miles each direction
+      const mileOffset = 0.093; // ~5 miles in longitude degrees at river latitude
+      const latOffset = 0.036;
+      const bounds = L.latLngBounds(
+        [selectedItem.lat - latOffset, selectedItem.lon - mileOffset],
+        [selectedItem.lat + latOffset, selectedItem.lon + mileOffset]
+      );
+      try {
+        map.current.fitBounds(bounds, { padding: [30, 30], maxZoom: 12, animate: true, duration: 0.5 });
+        console.log('[RIVER-MAP] Zoomed to selected item:', selectedItem.name);
+      } catch (fitErr) {
+        console.warn('[RIVER-MAP] FitBounds failed for selected item, falling back to setView:', fitErr);
+        map.current.setView([selectedItem.lat, selectedItem.lon], 11, { animate: true, duration: 0.5 });
+      }
+    }
+  }, [selectedLockId, locks, stations, mapReady]);
 
   // Handle zoom to user location when "Find Me" is clicked
   useEffect(() => {
@@ -480,7 +686,11 @@ export default function OhioRiverActivityMap({ locks = [], selectedLockId, userL
     
     // Remove previous user marker if exists
     if (userMarkerRef.current) {
-      map.current.removeLayer(userMarkerRef.current);
+      try {
+        map.current.removeLayer(userMarkerRef.current);
+      } catch (e) {
+        console.warn('[RIVER-MAP] Error removing user marker:', e);
+      }
       userMarkerRef.current = null;
     }
     
@@ -499,43 +709,78 @@ export default function OhioRiverActivityMap({ locks = [], selectedLockId, userL
     const { lat, lon } = userLocation;
     
     // Check if user is within 1 mile of river (simplified check)
-    const distanceToRiver = riverLinesRef.current.length > 0 ? 
-      riverLinesRef.current.reduce((minDist, line) => {
-        const lineMinDist = line.getLatLngs().reduce((dist, point) => {
-          const d = Math.sqrt(
-            Math.pow((point.lat - lat) * 69, 2) + // 69 miles per degree latitude
-            Math.pow((point.lng - lon) * 54 * Math.cos(lat * Math.PI / 180), 2) // 54 miles per degree longitude at this latitude
-          );
-          return Math.min(dist, d);
+    let distanceToRiver = Infinity;
+    
+    try {
+      if (riverLinesRef.current && Array.isArray(riverLinesRef.current) && riverLinesRef.current.length > 0) {
+        distanceToRiver = riverLinesRef.current.reduce((minDist, line) => {
+          try {
+            if (!line || typeof line.getLatLngs !== 'function') return minDist;
+            
+            const lineMinDist = line.getLatLngs().reduce((dist, point) => {
+              if (!point || typeof point.lat !== 'number' || typeof point.lng !== 'number') return dist;
+              
+              const d = Math.sqrt(
+                Math.pow((point.lat - lat) * 69, 2) + // 69 miles per degree latitude
+                Math.pow((point.lng - lon) * 54 * Math.cos(lat * Math.PI / 180), 2) // 54 miles per degree longitude at this latitude
+              );
+              return Math.min(dist, d);
+            }, Infinity);
+            return Math.min(minDist, lineMinDist);
+          } catch (lineErr) {
+            console.warn('[RIVER-MAP] Error calculating distance for line:', lineErr);
+            return minDist;
+          }
         }, Infinity);
-        return Math.min(minDist, lineMinDist);
-      }, Infinity) : Infinity;
+      }
+    } catch (err) {
+      console.error('[RIVER-MAP] Error checking distance to river:', err);
+      distanceToRiver = Infinity;
+    }
     
     // Always add a cyan dot marker for user location
-    userMarkerRef.current = L.marker([lat, lon], {
-      icon: L.divIcon({
-        html: '<div style="width: 12px; height: 12px; background: #06b6d4; border: 2px solid white; border-radius: 50%; box-shadow: 0 2px 8px rgba(0,0,0,0.5);"></div>',
-        iconSize: [16, 16],
-        iconAnchor: [8, 8],
-        className: 'user-location-marker'
-      })
-    }).addTo(map.current);
+    try {
+      userMarkerRef.current = L.marker([lat, lon], {
+        icon: L.divIcon({
+          html: '<div style="width: 12px; height: 12px; background: #06b6d4; border: 2px solid white; border-radius: 50%; box-shadow: 0 2px 8px rgba(0,0,0,0.5);"></div>',
+          iconSize: [16, 16],
+          iconAnchor: [8, 8],
+          className: 'user-location-marker'
+        })
+      }).addTo(map.current);
+    } catch (markerErr) {
+      console.error('[RIVER-MAP] Error creating user marker:', markerErr);
+      return;
+    }
     
     if (distanceToRiver <= 1) {
       // User is within 1 mile of river, zoom to show 5 miles on each side
-      const mileOffset = 0.093; // 5 miles in longitude degrees at Ohio River latitude
-      const latOffset = 0.036;
-      const bounds = L.latLngBounds(
-        [lat - latOffset, lon - mileOffset],
-        [lat + latOffset, lon + mileOffset]
-      );
-      map.current.fitBounds(bounds, { padding: [30, 30], maxZoom: 12, animate: true, duration: 0.5 });
-      
-      console.log('[RIVER-MAP] Zoomed to user location (within 1 mile of river)');
+      try {
+        const mileOffset = 0.093; // 5 miles in longitude degrees at Ohio River latitude
+        const latOffset = 0.036;
+        const bounds = L.latLngBounds(
+          [lat - latOffset, lon - mileOffset],
+          [lat + latOffset, lon + mileOffset]
+        );
+        map.current.fitBounds(bounds, { padding: [30, 30], maxZoom: 12, animate: true, duration: 0.5 });
+        
+        console.log('[RIVER-MAP] Zoomed to user location (within 1 mile of river)');
+      } catch (fitErr) {
+        console.error('[RIVER-MAP] Error fitting bounds for user location:', fitErr);
+        try {
+          map.current.setView([lat, lon], 10, { animate: true, duration: 0.5 });
+        } catch (viewErr) {
+          console.error('[RIVER-MAP] Error setting view:', viewErr);
+        }
+      }
     } else {
       // Zoom to show user location even if not near river
-      map.current.setView([lat, lon], 10, { animate: true, duration: 0.5 });
-      console.log('[RIVER-MAP] User location is', distanceToRiver.toFixed(2), 'miles from river - zooming to user location');
+      try {
+        map.current.setView([lat, lon], 10, { animate: true, duration: 0.5 });
+        console.log('[RIVER-MAP] User location is', distanceToRiver.toFixed(2), 'miles from river - zooming to user location');
+      } catch (viewErr) {
+        console.error('[RIVER-MAP] Error setting view for user location:', viewErr);
+      }
     }
   }, [userLocation, mapReady]);
 
@@ -575,6 +820,21 @@ export default function OhioRiverActivityMap({ locks = [], selectedLockId, userL
           box-shadow: 0 4px 16px rgba(0, 0, 0, 0.8);
         }
         :global(.lock-popup .leaflet-popup-tip) {
+          background: #1e293b;
+          border-left-color: #1e293b;
+          border-right-color: #1e293b;
+        }
+        :global(.city-popup .leaflet-popup-content) {
+          margin: 0;
+          padding: 0;
+        }
+        :global(.city-popup .leaflet-popup-content-wrapper) {
+          background: #1e293b;
+          border: 1px solid #06b6d4;
+          border-radius: 8px;
+          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.7);
+        }
+        :global(.city-popup .leaflet-popup-tip) {
           background: #1e293b;
           border-left-color: #1e293b;
           border-right-color: #1e293b;

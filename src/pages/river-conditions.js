@@ -5,44 +5,45 @@ import Footer from "@/components/Footer";
 import LockDamMap from "@/components/LockDamMap";
 import OhioRiverActivityMap from "@/components/OhioRiverActivityMap";
 import { ohioRiverLocks } from "@/lib/locks";
-import { useAuth } from "@/context/AuthContext";
+import { useUserProfile } from "@/context/UserProfileContext";
 
 /* ---------------------------------------------------
    Station List (Ohio River full chain)
 --------------------------------------------------- */
 const stations = [
-  { id: "03085152", name: "Pittsburgh, PA", lat: 40.44, lon: -79.99 },
-  { id: "03086000", name: "Dashields L&D, PA", lat: 40.52, lon: -80.2 },
-  { id: "03108500", name: "Montgomery L&D, PA", lat: 40.64, lon: -80.4 },
-  { id: "03110690", name: "New Cumberland L&D, WV", lat: 40.51, lon: -80.65 },
-  { id: "03111520", name: "Pike Island L&D, WV", lat: 40.09, lon: -80.69 },
-  { id: "03112500", name: "Wheeling, WV", lat: 40.06, lon: -80.72 },
-  { id: "03114280", name: "Hannibal L&D, OH", lat: 39.67, lon: -80.87 },
-  { id: "03150700", name: "Marietta, OH", lat: 39.42, lon: -81.46 },
-  { id: "03151000", name: "Parkersburg, WV", lat: 39.27, lon: -81.56 },
-  { id: "390707081443202", name: "Belleville L&D, WV", lat: 39.07, lon: -81.44 },
-  { id: "03159870", name: "Racine L&D, WV", lat: 38.93, lon: -82.12 },
-  { id: "03201500", name: "Point Pleasant, WV", lat: 38.84, lon: -82.13 },
-  { id: "03206000", name: "Near Huntington, WV", lat: 38.41, lon: -82.39 },
-  { id: "03216000", name: "Ashland, KY", lat: 38.47, lon: -82.63 },
-  { id: "03216600", name: "Greenup L&D, KY", lat: 38.57, lon: -82.84 },
-  { id: "03217200", name: "Portsmouth, OH", lat: 38.73, lon: -83.01 },
-  { id: "03238000", name: "Maysville, KY", lat: 38.64, lon: -83.77 },
-  { id: "03238680", name: "Meldahl L&D, OH", lat: 38.78, lon: -84.1 },
-  { id: "03255000", name: "Cincinnati, OH", lat: 39.1, lon: -84.51 },
-  { id: "03277200", name: "Markland Lower, KY", lat: 38.78, lon: -84.94 },
-  { id: "03293551", name: "McAlpine Upper, KY", lat: 38.27, lon: -85.79 },
-  { id: "03294500", name: "McAlpine Lower, KY", lat: 38.26, lon: -85.8 },
-  { id: "03303280", name: "Cannelton L&D, IN", lat: 37.91, lon: -86.75 },
-  { id: "03304300", name: "Newburgh L&D, IN", lat: 37.93, lon: -87.38 },
-  { id: "03322000", name: "Evansville, IN", lat: 37.97, lon: -87.57 },
-  { id: "03322190", name: "Henderson, KY", lat: 37.84, lon: -87.58 },
-  { id: "03322420", name: "J.T. Myers L&D, KY", lat: 37.78, lon: -87.98, ahps: "UNVK2" },
-  { id: "03381700", name: "Shawneetown, IL", lat: 37.69, lon: -88.14 },
-  { id: "03384500", name: "Golconda, IL", lat: 37.36, lon: -88.48 },
-  { id: "03399800", name: "Smithland L&D, KY", lat: 37.15, lon: -88.44 },
-  { id: "03612500", name: "Metropolis, IL", lat: 37.15, lon: -88.73 },
-  { id: "07022000", name: "Cairo, IL (Mouth)", lat: 36.99, lon: -89.18 },
+  { id: "03085152", name: "Pittsburgh, PA", lat: 40.44, lon: -79.99, riverMile: 0 },
+  { id: "03086000", name: "Dashields L&D, PA", lat: 40.52, lon: -80.2, riverMile: 6 },
+  { id: "03108500", name: "Montgomery L&D, PA", lat: 40.64, lon: -80.4, riverMile: 32 },
+  { id: "03110690", name: "New Cumberland L&D, WV", lat: 40.51, lon: -80.65, riverMile: 54 },
+  { id: "03111520", name: "Pike Island L&D, WV", lat: 40.09, lon: -80.69, riverMile: 84 },
+  { id: "03112500", name: "Wheeling, WV", lat: 40.06, lon: -80.72, riverMile: 88 },
+  { id: "03114280", name: "Hannibal L&D, OH", lat: 39.67, lon: -80.87, riverMile: 126 },
+  { id: "03150700", name: "Marietta, OH", lat: 39.42, lon: -81.46, riverMile: 175 },
+  { id: "03151000", name: "Parkersburg, WV", lat: 39.27, lon: -81.56, riverMile: 192 },
+  { id: "390707081443202", name: "Belleville L&D, WV", lat: 39.07, lon: -81.44, riverMile: 204 },
+  { id: "03159870", name: "Racine L&D, WV", lat: 38.93, lon: -82.12, riverMile: 237 },
+  { id: "03201500", name: "Point Pleasant, WV", lat: 38.84, lon: -82.13, riverMile: 252 },
+  { id: "03206000", name: "Near Huntington, WV", lat: 38.41, lon: -82.39, riverMile: 302 },
+  { id: "03216000", name: "Ashland, KY", lat: 38.47, lon: -82.63, riverMile: 314 },
+  { id: "03216600", name: "Greenup L&D, KY", lat: 38.57, lon: -82.84, riverMile: 341 },
+  { id: "03217200", name: "Portsmouth, OH", lat: 38.73, lon: -83.01, riverMile: 358 },
+  { id: "03238000", name: "Maysville, KY", lat: 38.64, lon: -83.77, riverMile: 404 },
+  { id: "03238680", name: "Meldahl L&D, OH", lat: 38.78, lon: -84.1, riverMile: 436 },
+  { id: "03255000", name: "Cincinnati, OH", lat: 39.1, lon: -84.51, riverMile: 471 },
+  { id: "03277200", name: "Markland Lower, KY", lat: 38.78, lon: -84.94, riverMile: 531 },
+  { id: "03293551", name: "McAlpine Upper, KY", lat: 38.27, lon: -85.79, riverMile: 584 },
+  { id: "03294500", name: "McAlpine Lower, KY", lat: 38.26, lon: -85.8, riverMile: 606 },
+  { id: "03303280", name: "Cannelton L&D, IN", lat: 37.91, lon: -86.75, riverMile: 720 },
+  { id: "03304300", name: "Newburgh L&D, IN", lat: 37.93, lon: -87.38, riverMile: 776 },
+  { id: "03322000", name: "Evansville, IN", lat: 37.97, lon: -87.57, riverMile: 792 },
+  { id: "03322190", name: "Henderson, KY", lat: 37.84, lon: -87.58, riverMile: 813 },
+  { id: "03380000", name: "Mt. Vernon, IN", lat: 37.82, lon: -87.88, riverMile: 823 },
+  { id: "03322420", name: "J.T. Myers L&D, KY", lat: 37.78, lon: -87.98, riverMile: 846, ahps: "UNVK2" },
+  { id: "03381700", name: "Shawneetown, IL", lat: 37.69, lon: -88.14, riverMile: 865 },
+  { id: "03384500", name: "Golconda, IL", lat: 37.36, lon: -88.48, riverMile: 918 },
+  { id: "03399800", name: "Smithland L&D, KY", lat: 37.15, lon: -88.44, riverMile: 919 },
+  { id: "03612500", name: "Metropolis, IL", lat: 37.15, lon: -88.73, riverMile: 935 },
+  { id: "07022000", name: "Cairo, IL (Mouth)", lat: 36.99, lon: -89.18, riverMile: 981 },
 ];
 
 /* ---------------------------------------------------
@@ -636,6 +637,8 @@ function AirQualityScale({ aqi }) {
 export default function RiverConditions() {
   const defaultStation = stations.find((s) => s.id === "03322420") ?? stations[0];
 
+  const { profile, saveMapPreferences, updateCachedRiverData, toggleFavorite } = useUserProfile();
+
   const [selected, setSelected] = useState(defaultStation);
 
   const [data, setData] = useState(null);
@@ -654,9 +657,6 @@ export default function RiverConditions() {
 
   const [mapCenter, setMapCenter] = useState({ lat: 37.77, lon: -87.5747 });
 
-  // Inline auth controls for page-level login visibility
-  const { isAdmin, loginWithGoogle, logout, loading } = useAuth();
-
   // Prevent “data disappears”: keep last good payloads
   const lastGoodRiverRef = useRef(null);
   const lastGoodWeatherRef = useRef(null);
@@ -664,6 +664,9 @@ export default function RiverConditions() {
 
   // Avoid race conditions between station changes / refresh
   const riverReqIdRef = useRef(0);
+
+  // Track if we've loaded saved preferences to avoid redundant effects
+  const preferencesLoadedRef = useRef(false);
 
   /* -------------------- DATA LOADERS -------------------- */
 
@@ -706,6 +709,10 @@ export default function RiverConditions() {
       if (okObserved || okHistory) {
         lastGoodRiverRef.current = json;
         setData(json);
+        // Auto-cache river data to profile
+        if (updateCachedRiverData) {
+          updateCachedRiverData(json);
+        }
       } else if (!silent && lastGoodRiverRef.current) {
         setData(lastGoodRiverRef.current);
       } else if (!silent) {
@@ -767,6 +774,53 @@ export default function RiverConditions() {
 
   /* -------------------- EFFECTS -------------------- */
 
+  // Load saved map preferences on mount (location, zoom, dark mode)
+  useEffect(() => {
+    if (!profile || preferencesLoadedRef.current) return;
+
+    preferencesLoadedRef.current = true;
+
+    const savedPrefs = profile.mapPreferences;
+    if (savedPrefs) {
+      // Restore dark mode preference
+      if (savedPrefs.darkMode === true) {
+        document.documentElement.classList.add('dark');
+      }
+
+      // Restore default location
+      if (savedPrefs.defaultLocation) {
+        setMapCenter({
+          lat: savedPrefs.defaultLocation.lat,
+          lon: savedPrefs.defaultLocation.lon,
+        });
+        // Find station at or nearest to saved location
+        const nearestStation = stations.reduce((prev, curr) => {
+          const prevDist = Math.hypot(
+            prev.lat - savedPrefs.defaultLocation.lat,
+            prev.lon - savedPrefs.defaultLocation.lon
+          );
+          const currDist = Math.hypot(
+            curr.lat - savedPrefs.defaultLocation.lat,
+            curr.lon - savedPrefs.defaultLocation.lon
+          );
+          return currDist < prevDist ? curr : prev;
+        });
+        if (nearestStation) {
+          setSelected(nearestStation);
+          setWxLoc({ lat: nearestStation.lat, lon: nearestStation.lon });
+        }
+      }
+
+      console.log('[RIVER-CONDITIONS] Loaded saved map preferences:', savedPrefs);
+    }
+
+    // Restore last cached data if available
+    if (profile.cachedData?.lastSeenRiverData) {
+      setData(profile.cachedData.lastSeenRiverData);
+      console.log('[RIVER-CONDITIONS] Loaded cached river data');
+    }
+  }, [profile]);
+
   useEffect(() => {
     loadRiver(selected);
   }, [selected]);
@@ -782,6 +836,24 @@ export default function RiverConditions() {
     loadWeather(wxLoc.lat, wxLoc.lon);
     loadAQI(wxLoc.lat, wxLoc.lon);
   }, [wxLoc]);
+
+  // Auto-save map state changes to user profile (location, zoom, dark mode)
+  useEffect(() => {
+    if (!saveMapPreferences || !selected) return;
+
+    const timer = setTimeout(() => {
+      saveMapPreferences({
+        defaultLocation: {
+          lat: selected.lat,
+          lon: selected.lon,
+        },
+        zoom: 8, // Default zoom level
+      });
+      console.log('[RIVER-CONDITIONS] Saved map location to profile:', selected.name);
+    }, 1000); // Debounce saves to avoid too many updates
+
+    return () => clearTimeout(timer);
+  }, [selected, saveMapPreferences]);
 
   // Cache user location on page unload, disconnect, or offline
   useEffect(() => {
@@ -818,85 +890,74 @@ export default function RiverConditions() {
   }, [userLocation, userCityState]);
 
   const findDownstreamStation = (userLat, userLon, stations) => {
-  if (!Array.isArray(stations) || stations.length === 0) return null;
+    if (!Array.isArray(stations) || stations.length === 0) return null;
 
-  // Step 1: nearest station
-  let nearest = null;
-  let bestDist = Infinity;
-
-  for (const s of stations) {
-    if (typeof s?.lat !== "number" || typeof s?.lon !== "number") continue;
-    const d = distKm(userLat, userLon, s.lat, s.lon);
-    if (d < bestDist) {
-      bestDist = d;
-      nearest = s;
+    // Step 1: Find all stations within 3 miles (close proximity check)
+    const closeStations = [];
+    for (const s of stations) {
+      if (typeof s?.lat !== "number" || typeof s?.lon !== "number") continue;
+      const d = distKm(userLat, userLon, s.lat, s.lon);
+      if (d <= 4.83) { // ~3 miles in km
+        closeStations.push({ station: s, distance: d });
+      }
     }
-  }
 
-  if (!nearest) return null;
+    // If user is very close to a station (< 3 miles), return the closest one
+    if (closeStations.length > 0) {
+      closeStations.sort((a, b) => a.distance - b.distance);
+      console.log('[RIVER-CONDITIONS] User is within 3 miles of', closeStations[0].station.name);
+      return closeStations[0].station;
+    }
 
-  // Step 2: downstream using river mile (preferred)
-  if (typeof nearest.riverMile === "number") {
-    const downstream = stations
-      .filter(
-        (s) =>
-          typeof s?.riverMile === "number" &&
-          s.riverMile > nearest.riverMile
-      )
-      .sort((a, b) => a.riverMile - b.riverMile)[0];
+    // Step 2: Find nearest station if not close to any
+    let nearest = null;
+    let bestDist = Infinity;
 
-    return downstream || nearest;
-  }
+    for (const s of stations) {
+      if (typeof s?.lat !== "number" || typeof s?.lon !== "number") continue;
+      const d = distKm(userLat, userLon, s.lat, s.lon);
+      if (d < bestDist) {
+        bestDist = d;
+        nearest = s;
+      }
+    }
 
-  // Step 3: fallback — Ohio River flows south/southwest
-  const fallback = stations
-    .filter((s) => typeof s?.lat === "number" && s.lat < nearest.lat)
-    .sort((a, b) => b.lat - a.lat)[0];
+    if (!nearest) return null;
 
+    // Step 3: Find downstream station using river mile
+    if (typeof nearest.riverMile === "number") {
+      // Find the next station downstream (higher river mile)
+      const downstreamCandidates = stations
+        .filter((s) => typeof s?.riverMile === "number" && s.riverMile > nearest.riverMile)
+        .sort((a, b) => a.riverMile - b.riverMile);
+      
+      if (downstreamCandidates.length > 0) {
+        console.log('[RIVER-CONDITIONS] Nearest station:', nearest.name, 'Mile', nearest.riverMile, '-> Downstream:', downstreamCandidates[0].name, 'Mile', downstreamCandidates[0].riverMile);
+        return downstreamCandidates[0];
+      }
+    }
 
-                  {/* Inline Login/Admin controls */}
-                  <div className="mt-2 flex items-center justify-end gap-3 w-full">
-                    {loading ? (
-                      <span className="text-[10px] text-foreground/60">Checking login…</span>
-                    ) : isAdmin ? (
-                      <>
-                        <Link
-                          href="/admin"
-                          className="text-[10px] text-foreground/80 hover:text-[hsl(142,70%,35%)]"
-                        >
-                          Admin
-                        </Link>
-                        <button
-                          onClick={logout}
-                          className="text-[10px] text-muted-foreground hover:text-destructive"
-                        >
-                          Logout
-                        </button>
-                      </>
-                    ) : (
-                      <button
-                        onClick={loginWithGoogle}
-                        className="text-[10px] text-foreground/70 hover:text-[hsl(142,70%,35%)]"
-                      >
-                        Login
-                      </button>
-                    )}
-                  </div>
-  return fallback || nearest;
-};
-const buildFindMeInfo = (userLat, userLon, station) => {
-  if (!station) return null;
+    // Step 4: Fallback — Ohio River flows south/southwest (use latitude)
+    const fallback = stations
+      .filter((s) => typeof s?.lat === "number" && s.lat < nearest.lat)
+      .sort((a, b) => b.lat - a.lat)[0];
 
-  // Calculate straight-line distance to downstream station
-  const km = distKm(userLat, userLon, station.lat, station.lon);
-  const miles = kmToMiles(km);
-  const distanceText = `${miles.toFixed(1)} miles downstream`;
-
-  return {
-    label: `You are upstream of ${station.name}`,
-    distance: distanceText,
+    return fallback || nearest;
   };
-};
+
+  const buildFindMeInfo = (userLat, userLon, station) => {
+    if (!station) return null;
+
+    // Calculate straight-line distance to downstream station
+    const km = distKm(userLat, userLon, station.lat, station.lon);
+    const miles = kmToMiles(km);
+    const distanceText = `${miles.toFixed(1)} miles downstream`;
+
+    return {
+      label: `You are upstream of ${station.name}`,
+      distance: distanceText,
+    };
+  };
 
   /* -------------------- LOCATE ME ----------------------- */
 
@@ -973,23 +1034,32 @@ const buildFindMeInfo = (userLat, userLon, station) => {
         let geocodeSuccess = false;
         
         try {
-          const geocodeUrl = `/api/geocode?lat=${userLat}&lon=${userLon}`;
+          const geocodeUrl = `/api/geocode?lat=${userLat}&lon=${userLon}&t=${Date.now()}`;
           console.log('Geocode URL:', geocodeUrl);
-          const response = await fetch(geocodeUrl);
+          const response = await fetch(geocodeUrl, {
+            method: 'GET',
+            cache: 'no-store',
+            headers: {
+              'Cache-Control': 'no-cache, no-store, must-revalidate',
+              'Pragma': 'no-cache',
+              'Expires': '0'
+            }
+          });
           
-          if (!response.ok) {
-            throw new Error(`Geocoding failed: ${response.status}`);
-          }
-          
-          const data = await response.json();
-          console.log('Geocode response:', data);
-          
-          if (data && data.success && data.location) {
-            setUserCityState(data.location);
-            console.log('User location set to:', data.location);
-            geocodeSuccess = true;
+          // Only treat 2xx as success
+          if (response.ok) {
+            const data = await response.json();
+            console.log('Geocode response:', data);
+            
+            if (data && data.success && data.location) {
+              setUserCityState(data.location);
+              console.log('User location set to:', data.location);
+              geocodeSuccess = true;
+            } else {
+              console.log('Could not extract location from geocoding data');
+            }
           } else {
-            console.log('Could not extract location from geocoding data');
+            console.warn(`Geocoding API returned ${response.status}, location will be unavailable`);
           }
         } catch (error) {
           console.error('Error fetching location name:', error);
@@ -1025,19 +1095,28 @@ const buildFindMeInfo = (userLat, userLon, station) => {
             setTimeout(() => {
               // Re-fetch from geocoding API to get fresh data for cache
               const cacheGeocodeUrl = `/api/geocode?lat=${userLat}&lon=${userLon}`;
-              fetch(cacheGeocodeUrl).then(r => r.json()).then(data => {
-                if (data && data.success && data.location) {
-                  const locationCache = {
-                    lat: userLat,
-                    lon: userLon,
-                    cityState: data.location,
-                    findMeInfo: info,
-                    timestamp: Date.now()
-                  };
-                  localStorage.setItem('cachedUserLocation', JSON.stringify(locationCache));
-                  console.log('Cached location:', locationCache);
-                }
-              }).catch(err => console.error('Cache update failed:', err));
+              fetch(cacheGeocodeUrl)
+                .then(r => {
+                  if (!r.ok) {
+                    console.warn(`Cache update failed with status ${r.status}`);
+                    return null;
+                  }
+                  return r.json();
+                })
+                .then(data => {
+                  if (data && data.success && data.location) {
+                    const locationCache = {
+                      lat: userLat,
+                      lon: userLon,
+                      cityState: data.location,
+                      findMeInfo: info,
+                      timestamp: Date.now()
+                    };
+                    localStorage.setItem('cachedUserLocation', JSON.stringify(locationCache));
+                    console.log('Cached location:', locationCache);
+                  }
+                })
+                .catch(err => console.error('Cache update failed:', err));
             }, 500);
           }
         }
@@ -1153,6 +1232,20 @@ const buildFindMeInfo = (userLat, userLon, station) => {
                     </option>
                   ))}
                 </select>
+                {/* Favorite button */}
+                <button
+                  onClick={() => {
+                    if (toggleFavorite) {
+                      toggleFavorite('gauges', selected.id);
+                    }
+                  }}
+                  className="p-1 rounded hover:bg-white/10 transition-colors"
+                  title={profile?.favorites?.gauges?.includes(selected.id) ? "Remove from favorites" : "Add to favorites"}
+                >
+                  <span className="text-lg">
+                    {profile?.favorites?.gauges?.includes(selected.id) ? "★" : "☆"}
+                  </span>
+                </button>
               </div>
 
               <div className="mt-2">
@@ -1266,22 +1359,28 @@ const buildFindMeInfo = (userLat, userLon, station) => {
       ) : mapType === "topo" ? (
         <OhioRiverActivityMap 
           locks={ohioRiverLocks}
+          stations={stations}
           selectedLockId={selected?.id}
           userLocation={userLocation}
+          onLockSelect={(id) => setSelected(stations.find(s => s.id === id) || ohioRiverLocks.find(l => l.id === id))}
           mapStyle="topo"
         />
       ) : mapType === "dark" ? (
         <OhioRiverActivityMap 
           locks={ohioRiverLocks}
+          stations={stations}
           selectedLockId={selected?.id}
           userLocation={userLocation}
+          onLockSelect={(id) => setSelected(stations.find(s => s.id === id) || ohioRiverLocks.find(l => l.id === id))}
           mapStyle="dark"
         />
       ) : (
         <OhioRiverActivityMap 
           locks={ohioRiverLocks}
+          stations={stations}
           selectedLockId={selected?.id}
           userLocation={userLocation}
+          onLockSelect={(id) => setSelected(stations.find(s => s.id === id) || ohioRiverLocks.find(l => l.id === id))}
         />
       )}
 
