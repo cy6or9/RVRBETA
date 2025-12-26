@@ -640,6 +640,7 @@ export default function RiverConditions() {
   const { profile, saveMapPreferences, updateCachedRiverData, updateCachedForecast, toggleFavorite } = useUserProfile();
 
   const [selected, setSelected] = useState(defaultStation);
+  const [selectedDam, setSelectedDam] = useState(null);
   const [favoritesOnly, setFavoritesOnly] = useState(false);
 
   const [data, setData] = useState(null);
@@ -822,10 +823,13 @@ export default function RiverConditions() {
   }, [profile]);
 
   useEffect(() => {
-    loadRiver(selected);
+    if (selected) {
+      loadRiver(selected);
+    }
   }, [selected]);
 
   useEffect(() => {
+    if (!selected) return;
     const t = setInterval(() => {
       loadRiver(selected, { silent: true });
     }, 60_000);
@@ -973,6 +977,7 @@ export default function RiverConditions() {
       const nearestStation = findDownstreamStation(37.77, -87.5747, stations);
       if (nearestStation) {
         setSelected(nearestStation);
+        setSelectedDam(null); // Clear dam selection
         setMapCenter({ lat: nearestStation.lat, lon: nearestStation.lon });
         setWxLoc({ lat: nearestStation.lat, lon: nearestStation.lon });
       }
@@ -1079,6 +1084,7 @@ export default function RiverConditions() {
 
         if (downstreamStation) {
           setSelected(downstreamStation);
+          setSelectedDam(null); // Clear dam selection when selecting station
 
           const info = buildFindMeInfo(
             userLat,
@@ -1215,16 +1221,19 @@ export default function RiverConditions() {
               <div className="flex items-center gap-2 mt-1">
                 <label className="text-sm">Station:</label>
                 <select
-                  value={selected.id}
+                  value={selected?.id || ""}
                   onChange={(e) => {
+                    if (e.target.value === "") return;
                     const st = stations.find((s) => s.id === e.target.value);
                     if (!st) return;
                     setSelected(st);
+                    setSelectedDam(null); // Clear dam selection when selecting station
                     setWxLoc({ lat: st.lat, lon: st.lon });
                     setMapCenter({ lat: st.lat, lon: st.lon });
                   }}
                   className="px-3 py-1 text-black rounded bg-white"
                 >
+                  {!selected && <option value="">-- Select Station --</option>}
                   {(favoritesOnly && profile?.favorites?.gauges?.length > 0
                     ? stations.filter((s) => profile.favorites.gauges.includes(s.id))
                     : stations
@@ -1237,15 +1246,16 @@ export default function RiverConditions() {
                 {/* Favorite button */}
                 <button
                   onClick={() => {
-                    if (toggleFavorite) {
+                    if (toggleFavorite && selected?.id) {
                       toggleFavorite('gauges', selected.id);
                     }
                   }}
-                  className="p-1 rounded hover:bg-white/10 transition-colors"
-                  title={profile?.favorites?.gauges?.includes(selected.id) ? "Remove from favorites" : "Add to favorites"}
+                  disabled={!selected}
+                  className="p-1 rounded hover:bg-white/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  title={!selected ? "Select a station first" : (profile?.favorites?.gauges?.includes(selected.id) ? "Remove from favorites" : "Add to favorites")}
                 >
                   <span className="text-lg">
-                    {profile?.favorites?.gauges?.includes(selected.id) ? "★" : "☆"}
+                    {selected && profile?.favorites?.gauges?.includes(selected.id) ? "★" : "☆"}
                   </span>
                 </button>
                 {/* Favorites Only filter */}
@@ -1261,11 +1271,15 @@ export default function RiverConditions() {
               </div>
 
               <div className="mt-2">
-                <p className="text-sm font-semibold uppercase">{data?.location ?? selected.name}</p>
+                <p className="text-sm font-semibold uppercase">
+                  {selectedDam ? selectedDam.name : (data?.location ?? selected?.name ?? "Select a station")}
+                </p>
 
                 <p className="text-sm">
-                  {typeof data?.observed === "number" ? `${data.observed.toFixed(2)} ft` : "Loading…"}
-                  {data?.time ? ` at ${formatLocal(data.time)}` : ""}
+                  {selectedDam 
+                    ? `Lock & Dam at River Mile ${selectedDam.riverMile}`
+                    : (typeof data?.observed === "number" ? `${data.observed.toFixed(2)} ft` : "Loading…")}
+                  {!selectedDam && data?.time ? ` at ${formatLocal(data.time)}` : ""}
                 </p>
               </div>
             </div>
@@ -1372,27 +1386,93 @@ export default function RiverConditions() {
         <OhioRiverActivityMap 
           locks={ohioRiverLocks}
           stations={stations}
-          selectedLockId={selected?.id}
+          selectedLockId={selectedDam?.id || selected?.id}
           userLocation={userLocation}
-          onLockSelect={(id) => setSelected(stations.find(s => s.id === id) || ohioRiverLocks.find(l => l.id === id))}
+          onLockSelect={(id) => {
+            // Determine if clicked item is a station or dam
+            const station = stations.find(s => s.id === id);
+            const dam = ohioRiverLocks.find(l => l.id === id);
+            
+            if (station) {
+              setSelected(station);
+              setSelectedDam(null);
+              setWxLoc({ lat: station.lat, lon: station.lon });
+              setMapCenter({ lat: station.lat, lon: station.lon });
+            } else if (dam) {
+              // Find nearest station to the dam for river data
+              const nearestStation = stations.reduce((prev, curr) => {
+                const prevDist = Math.hypot(prev.lat - dam.lat, prev.lon - dam.lon);
+                const currDist = Math.hypot(curr.lat - dam.lat, curr.lon - dam.lon);
+                return currDist < prevDist ? curr : prev;
+              });
+              setSelectedDam(dam);
+              setSelected(nearestStation); // Keep station selected for river data
+              setWxLoc({ lat: dam.lat, lon: dam.lon });
+              setMapCenter({ lat: dam.lat, lon: dam.lon });
+            }
+          }}
           mapStyle="topo"
         />
       ) : mapType === "dark" ? (
         <OhioRiverActivityMap 
           locks={ohioRiverLocks}
           stations={stations}
-          selectedLockId={selected?.id}
+          selectedLockId={selectedDam?.id || selected?.id}
           userLocation={userLocation}
-          onLockSelect={(id) => setSelected(stations.find(s => s.id === id) || ohioRiverLocks.find(l => l.id === id))}
+          onLockSelect={(id) => {
+            // Determine if clicked item is a station or dam
+            const station = stations.find(s => s.id === id);
+            const dam = ohioRiverLocks.find(l => l.id === id);
+            
+            if (station) {
+              setSelected(station);
+              setSelectedDam(null);
+              setWxLoc({ lat: station.lat, lon: station.lon });
+              setMapCenter({ lat: station.lat, lon: station.lon });
+            } else if (dam) {
+              // Find nearest station to the dam for river data
+              const nearestStation = stations.reduce((prev, curr) => {
+                const prevDist = Math.hypot(prev.lat - dam.lat, prev.lon - dam.lon);
+                const currDist = Math.hypot(curr.lat - dam.lat, curr.lon - dam.lon);
+                return currDist < prevDist ? curr : prev;
+              });
+              setSelectedDam(dam);
+              setSelected(nearestStation); // Keep station selected for river data
+              setWxLoc({ lat: dam.lat, lon: dam.lon });
+              setMapCenter({ lat: dam.lat, lon: dam.lon });
+            }
+          }}
           mapStyle="dark"
         />
       ) : (
         <OhioRiverActivityMap 
           locks={ohioRiverLocks}
           stations={stations}
-          selectedLockId={selected?.id}
+          selectedLockId={selectedDam?.id || selected?.id}
           userLocation={userLocation}
-          onLockSelect={(id) => setSelected(stations.find(s => s.id === id) || ohioRiverLocks.find(l => l.id === id))}
+          onLockSelect={(id) => {
+            // Determine if clicked item is a station or dam
+            const station = stations.find(s => s.id === id);
+            const dam = ohioRiverLocks.find(l => l.id === id);
+            
+            if (station) {
+              setSelected(station);
+              setSelectedDam(null);
+              setWxLoc({ lat: station.lat, lon: station.lon });
+              setMapCenter({ lat: station.lat, lon: station.lon });
+            } else if (dam) {
+              // Find nearest station to the dam for river data
+              const nearestStation = stations.reduce((prev, curr) => {
+                const prevDist = Math.hypot(prev.lat - dam.lat, prev.lon - dam.lon);
+                const currDist = Math.hypot(curr.lat - dam.lat, curr.lon - dam.lon);
+                return currDist < prevDist ? curr : prev;
+              });
+              setSelectedDam(dam);
+              setSelected(nearestStation); // Keep station selected for river data
+              setWxLoc({ lat: dam.lat, lon: dam.lon });
+              setMapCenter({ lat: dam.lat, lon: dam.lon });
+            }
+          }}
         />
       )}
 
@@ -1444,7 +1524,7 @@ export default function RiverConditions() {
               {weather && (
                 <>
                   <p className="font-semibold whitespace-nowrap overflow-hidden text-ellipsis">
-                    {userCityState || selected.name}
+                    {userCityState || selectedDam?.name || selected?.name || "Select location"}
                   </p>
                   <div className="flex items-start gap-3">
                     <div className="flex flex-col">
