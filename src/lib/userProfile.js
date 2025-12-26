@@ -76,7 +76,7 @@ export const defaultUserProfile = {
  */
 export async function createUserProfile(userId, initialData = {}) {
   if (!firebaseEnabled || !db) {
-    console.warn("Firestore not enabled");
+
     return null;
   }
 
@@ -90,10 +90,10 @@ export async function createUserProfile(userId, initialData = {}) {
     };
 
     await setDoc(userRef, profile);
-    console.log("User profile created:", userId);
+
     return profile;
   } catch (error) {
-    console.error("Error creating user profile:", error);
+
     throw error;
   }
 }
@@ -105,7 +105,7 @@ export async function createUserProfile(userId, initialData = {}) {
  */
 export async function getUserProfile(userId) {
   if (!firebaseEnabled || !db) {
-    console.warn("Firestore not enabled, returning default profile");
+
     return defaultUserProfile;
   }
 
@@ -117,11 +117,11 @@ export async function getUserProfile(userId) {
       return docSnap.data();
     } else {
       // Create profile if it doesn't exist
-      console.log("Profile not found, creating new one");
+
       return await createUserProfile(userId);
     }
   } catch (error) {
-    console.error("Error getting user profile:", error);
+
     return defaultUserProfile;
   }
 }
@@ -134,7 +134,7 @@ export async function getUserProfile(userId) {
  */
 export async function updateUserProfile(userId, updates) {
   if (!firebaseEnabled || !db) {
-    console.warn("Firestore not enabled");
+
     return;
   }
 
@@ -144,9 +144,9 @@ export async function updateUserProfile(userId, updates) {
       ...updates,
       updatedAt: serverTimestamp(),
     });
-    console.log("User profile updated:", userId);
+
   } catch (error) {
-    console.error("Error updating user profile:", error);
+
     throw error;
   }
 }
@@ -197,7 +197,7 @@ export async function addFavorite(userId, type, itemId) {
       });
     }
   } catch (error) {
-    console.error("Error adding favorite:", error);
+
   }
 }
 
@@ -219,7 +219,7 @@ export async function removeFavorite(userId, type, itemId) {
       [`favorites.${type}`]: filtered,
     });
   } catch (error) {
-    console.error("Error removing favorite:", error);
+
   }
 }
 
@@ -264,7 +264,7 @@ export async function addPreferredStation(userId, stationId) {
       });
     }
   } catch (error) {
-    console.error("Error adding preferred station:", error);
+
   }
 }
 
@@ -285,7 +285,7 @@ export async function removePreferredStation(userId, stationId) {
       "cachedData.preferredStations": filtered,
     });
   } catch (error) {
-    console.error("Error removing preferred station:", error);
+
   }
 }
 

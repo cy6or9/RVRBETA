@@ -41,7 +41,7 @@ export function UserProfileProvider({ children }) {
         const userProfile = await getUserProfile(user.uid);
         setProfile(userProfile);
       } catch (error) {
-        console.error("Error loading user profile:", error);
+
         setProfile(defaultUserProfile);
       } finally {
         setLoading(false);
@@ -75,7 +75,7 @@ export function UserProfileProvider({ children }) {
         try {
           await updateMapPreferences(user.uid, newPreferences);
         } catch (error) {
-          console.error("Error saving map preferences:", error);
+
         }
       }
     },
@@ -114,7 +114,7 @@ export function UserProfileProvider({ children }) {
             await addFavorite(user.uid, type, itemId);
           }
         } catch (error) {
-          console.error("Error toggling favorite:", error);
+
           // Revert on error
           setProfile((prev) => {
             const currentFavorites = prev.favorites?.[type] || [];
@@ -176,7 +176,7 @@ export function UserProfileProvider({ children }) {
             await addPreferredStation(user.uid, stationId);
           }
         } catch (error) {
-          console.error("Error toggling preferred station:", error);
+
         }
       }
     },
@@ -202,7 +202,7 @@ export function UserProfileProvider({ children }) {
             "cachedData.lastUpdated": new Date().toISOString(),
           });
         } catch (error) {
-          console.error("Error updating cached data:", error);
+
         }
       }
     },
@@ -228,7 +228,7 @@ export function UserProfileProvider({ children }) {
             "cachedData.lastUpdatedForecast": new Date().toISOString(),
           });
         } catch (error) {
-          console.error("Error updating cached forecast:", error);
+
         }
       }
     },
@@ -255,7 +255,7 @@ export function UserProfileProvider({ children }) {
             },
           });
         } catch (error) {
-          console.error("Error updating offline settings:", error);
+
         }
       }
     },

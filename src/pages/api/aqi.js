@@ -81,7 +81,7 @@ export default async function handler(req, res) {
       category: getCategory(aqi),
     });
   } catch (err) {
-    console.error("AQI fetch error:", err);
+
     return res.status(200).json({
       aqi: null,
       category: "Unknown",

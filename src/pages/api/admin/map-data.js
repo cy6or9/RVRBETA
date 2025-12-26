@@ -17,7 +17,7 @@ export default async function handler(req, res) {
 
     if (action === 'updateRiverPoints') {
       // Save river polyline points
-      console.log('[ADMIN] River points updated:', data.segments?.length || 0, 'segments');
+
       res.status(200).json({
         success: true,
         message: 'River points saved',
@@ -25,7 +25,7 @@ export default async function handler(req, res) {
       });
     } else if (action === 'updateLocks') {
       // Save lock positions
-      console.log('[ADMIN] Locks updated:', data.locks?.length || 0, 'locks');
+
       res.status(200).json({
         success: true,
         message: 'Lock positions saved',
@@ -33,7 +33,7 @@ export default async function handler(req, res) {
       });
     } else if (action === 'updateStations') {
       // Save station positions
-      console.log('[ADMIN] Stations updated:', data.stations?.length || 0, 'stations');
+
       res.status(200).json({
         success: true,
         message: 'Station positions saved',
@@ -48,7 +48,7 @@ export default async function handler(req, res) {
           message: 'Missing required fields: id, township, state, lat, lon',
         });
       }
-      console.log('[ADMIN] New station added:', id, `${township}, ${state}`);
+
       res.status(201).json({
         success: true,
         message: 'Station added successfully',
@@ -63,7 +63,7 @@ export default async function handler(req, res) {
           message: 'Station ID required',
         });
       }
-      console.log('[ADMIN] Station removed:', id);
+
       res.status(200).json({
         success: true,
         message: 'Station removed successfully',
@@ -78,7 +78,7 @@ export default async function handler(req, res) {
           message: 'Missing required fields: id, name, riverMile, lat, lon',
         });
       }
-      console.log('[ADMIN] New lock added:', id, name);
+
       res.status(201).json({
         success: true,
         message: 'Lock added successfully',
@@ -93,7 +93,7 @@ export default async function handler(req, res) {
           message: 'Lock ID required',
         });
       }
-      console.log('[ADMIN] Lock removed:', id);
+
       res.status(200).json({
         success: true,
         message: 'Lock removed successfully',

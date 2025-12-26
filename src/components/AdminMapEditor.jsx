@@ -2,6 +2,7 @@
 // Modal/panel for admins to edit map: drag points, add/remove stations and locks
 
 import { useState, useRef } from 'react';
+import { useMemo } from 'react';
 import { X, Plus, Trash2, Save } from 'lucide-react';
 
 export default function AdminMapEditor({

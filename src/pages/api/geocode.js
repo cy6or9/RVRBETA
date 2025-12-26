@@ -106,7 +106,7 @@ export default async function handler(req, res) {
     if (!city && data.address.county && data.address.state) {
       const knownTown = findNearestKnownTown(data.address.county, data.address.state, userLat, userLon);
       if (knownTown) {
-        console.log(`[GEOCODE] Found known town: ${knownTown.name} for ${data.address.county}, ${data.address.state}`);
+
         city = knownTown.name;
       }
     }
@@ -125,8 +125,7 @@ export default async function handler(req, res) {
         
         if (coordSearchResponse.ok) {
           const coordSearchResults = await coordSearchResponse.json();
-          console.log(`[GEOCODE] Coordinate search returned ${coordSearchResults?.length || 0} results`);
-          
+
           if (coordSearchResults && coordSearchResults.length > 0) {
             // Find the closest place within ~10km
             let closestPlace = null;
@@ -155,13 +154,13 @@ export default async function handler(req, res) {
             }
             
             if (closestPlace) {
-              console.log(`[GEOCODE] Using coordinate-based result: ${closestPlace.name}`);
+
               city = closestPlace.name;
             }
           }
         }
       } catch (e) {
-        console.error('[GEOCODE] Coordinate-based town search failed:', e.message);
+
       }
     }
     
@@ -178,8 +177,7 @@ export default async function handler(req, res) {
         
         if (countySearchResponse.ok) {
           const countySearchResults = await countySearchResponse.json();
-          console.log(`[GEOCODE] County search for "${data.address.county}, ${data.address.state}" returned ${countySearchResults?.length || 0} results`);
-          
+
           if (countySearchResults && countySearchResults.length > 0) {
             // Find the closest place within ~20km
             let closestPlace = null;
@@ -208,19 +206,19 @@ export default async function handler(req, res) {
             }
             
             if (closestPlace) {
-              console.log(`[GEOCODE] Using county-based result: ${closestPlace.name}`);
+
               city = closestPlace.name;
             }
           }
         }
       } catch (e) {
-        console.error('[GEOCODE] County-based town search failed:', e.message);
+
       }
     }
     
     // Use place name from reverse geocoding as final fallback
     if (!city && place_name) {
-      console.log(`[GEOCODE] Using place_name fallback: ${place_name}`);
+
       city = place_name;
     }
     
@@ -246,8 +244,6 @@ export default async function handler(req, res) {
       locationStr = stateAbbrev;
     }
 
-    console.log(`[GEOCODE] Final result for [${lat}, ${lon}]: "${locationStr}"`);
-
     return res.status(200).json({
       success: true,
       location: locationStr,
@@ -258,7 +254,7 @@ export default async function handler(req, res) {
       name: place_name,
     });
   } catch (error) {
-    console.error('Geocoding error:', error);
+
     return res.status(500).json({ error: 'Geocoding failed', message: error.message });
   }
 }

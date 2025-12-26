@@ -44,19 +44,19 @@ export default function handler(req, res) {
           url: signedUrl,
         });
       } catch (err) {
-        console.error("UPLOAD SAVE ERROR:", err);
+
         return res.status(500).json({ error: "Upload failed" });
       }
     });
 
     req.on("error", (err) => {
-      console.error("UPLOAD STREAM ERROR:", err);
+
       if (!res.headersSent) {
         res.status(500).json({ error: "Upload stream error" });
       }
     });
   } catch (err) {
-    console.error("UPLOAD HANDLER ERROR:", err);
+
     if (!res.headersSent) {
       return res.status(500).json({ error: "Internal server error" });
     }

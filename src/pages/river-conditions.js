@@ -812,13 +812,12 @@ export default function RiverConditions() {
         }
       }
 
-      console.log('[RIVER-CONDITIONS] Loaded saved map preferences:', savedPrefs);
     }
 
     // Restore last cached data if available
     if (profile.cachedData?.lastSeenRiverData) {
       setData(profile.cachedData.lastSeenRiverData);
-      console.log('[RIVER-CONDITIONS] Loaded cached river data');
+
     }
   }, [profile]);
 
@@ -850,7 +849,7 @@ export default function RiverConditions() {
         },
         zoom: 8, // Default zoom level
       });
-      console.log('[RIVER-CONDITIONS] Saved map location to profile:', selected.name);
+
     }, 1000); // Debounce saves to avoid too many updates
 
     return () => clearTimeout(timer);
@@ -906,7 +905,7 @@ export default function RiverConditions() {
     // If user is very close to a station (< 3 miles), return the closest one
     if (closeStations.length > 0) {
       closeStations.sort((a, b) => a.distance - b.distance);
-      console.log('[RIVER-CONDITIONS] User is within 3 miles of', closeStations[0].station.name);
+
       return closeStations[0].station;
     }
 
@@ -933,7 +932,7 @@ export default function RiverConditions() {
         .sort((a, b) => a.riverMile - b.riverMile);
       
       if (downstreamCandidates.length > 0) {
-        console.log('[RIVER-CONDITIONS] Nearest station:', nearest.name, 'Mile', nearest.riverMile, '-> Downstream:', downstreamCandidates[0].name, 'Mile', downstreamCandidates[0].riverMile);
+
         return downstreamCandidates[0];
       }
     }
@@ -1015,28 +1014,28 @@ export default function RiverConditions() {
             const sevenDays = 7 * 24 * 60 * 60 * 1000;
             
             if (cacheDist < 0.1 && cacheAge < sevenDays) {
-              console.log('Using cached location:', locationCache.cityState);
+
               if (locationCache.cityState) {
                 setUserCityState(locationCache.cityState);
               }
               // Load cached findMeInfo for instant display
               if (locationCache.findMeInfo) {
                 setFindMeInfo(locationCache.findMeInfo);
-                console.log('Using cached findMeInfo:', locationCache.findMeInfo);
+
               }
             }
           }
         } catch (err) {
-          console.error('Error loading cached location:', err);
+
         }
 
         // Reverse geocode to get city and state using server-side API
-        console.log('Starting reverse geocode for:', userLat, userLon);
+
         let geocodeSuccess = false;
         
         try {
           const geocodeUrl = `/api/geocode?lat=${userLat}&lon=${userLon}&t=${Date.now()}`;
-          console.log('Geocode URL:', geocodeUrl);
+
           const response = await fetch(geocodeUrl, {
             method: 'GET',
             cache: 'no-store',
@@ -1050,26 +1049,25 @@ export default function RiverConditions() {
           // Only treat 2xx as success
           if (response.ok) {
             const data = await response.json();
-            console.log('Geocode response:', data);
-            
+
             if (data && data.success && data.location) {
               setUserCityState(data.location);
-              console.log('User location set to:', data.location);
+
               geocodeSuccess = true;
             } else {
-              console.log('Could not extract location from geocoding data');
+
             }
           } else {
-            console.warn(`Geocoding API returned ${response.status}, location will be unavailable`);
+
           }
         } catch (error) {
-          console.error('Error fetching location name:', error);
+
         }
         
         // If geocoding failed, the server-side API already tried all fallbacks
         // Just log if we still don't have a location
         if (!geocodeSuccess && !userCityState) {
-          console.warn('All geocoding attempts failed, no location available');
+
         }
 
         // 🔥 THIS IS THE IMPORTANT PART
@@ -1099,7 +1097,7 @@ export default function RiverConditions() {
               fetch(cacheGeocodeUrl)
                 .then(r => {
                   if (!r.ok) {
-                    console.warn(`Cache update failed with status ${r.status}`);
+
                     return null;
                   }
                   return r.json();
@@ -1114,7 +1112,7 @@ export default function RiverConditions() {
                       timestamp: Date.now()
                     };
                     localStorage.setItem('cachedUserLocation', JSON.stringify(locationCache));
-                    console.log('Cached location:', locationCache);
+
                   }
                 })
                 .catch(err => console.error('Cache update failed:', err));
@@ -1123,7 +1121,7 @@ export default function RiverConditions() {
         }
       },
       (err) => {
-        console.error("Geolocation error:", err);
+
         let errorMsg = "Unable to get location.";
         
         switch(err.code) {

@@ -45,7 +45,7 @@ export default function handler(req, res) {
 
       return res.status(201).json(article);
     } catch (err) {
-      console.error("Error creating article:", err);
+
       return res.status(500).json({ error: "Failed to create article" });
     }
   }

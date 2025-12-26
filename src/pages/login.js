@@ -28,7 +28,7 @@ export default function LoginPage() {
     try {
       await loginWithGoogle();
     } catch (err) {
-      console.error("Login error:", err);
+
       alert("Google sign-in failed. Please try again.");
     }
   };

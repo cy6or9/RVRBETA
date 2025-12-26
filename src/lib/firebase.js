@@ -46,7 +46,7 @@ if (firebaseEnabled) {
 
   // Persist login across page reloads
   setPersistence(auth, browserLocalPersistence).catch((err) => {
-    console.warn("Firebase auth persistence failed:", err);
+
   });
 } else {
   console.warn(

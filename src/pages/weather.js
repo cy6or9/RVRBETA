@@ -139,7 +139,7 @@ export default function Weather() {
         const list = aqiJson.hourly?.us_aqi || [];
         setAqi(list.length ? list[list.length - 1] : null);
       } catch (err) {
-        console.error("Weather/AQI load error:", err);
+
       } finally {
         setLoading(false);
       }

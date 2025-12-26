@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { useMemo } from 'react';
 
 /**
  * OhioRiverActivityMap Component
@@ -61,7 +62,7 @@ export default function OhioRiverActivityMap({ locks = [], stations = [], select
       
       // Check if map container is already initialized (React Strict Mode double mount)
       if (mapContainer.current._leaflet_id) {
-        console.log('[RIVER-MAP] Map already initialized, skipping');
+
         return;
       }
 
@@ -101,36 +102,34 @@ export default function OhioRiverActivityMap({ locks = [], stations = [], select
       tileLayerRef.current = L.tileLayer(tileUrl, tileOptions).addTo(map.current);
 
       // Load Ohio River channel data from API
-      console.log('[RIVER-MAP] Starting fetch of river outline...');
+
       fetch(`/api/river-outline?t=${Date.now()}`, { cache: 'no-store' })
         .then((r) => {
-          console.log('[RIVER-MAP] Fetch response status:', r.status);
+
           if (!r.ok) throw new Error(`HTTP ${r.status}`);
           return r.json();
         })
         .then((data) => {
-          console.log('[RIVER-MAP] River outline API response:', data);
-          
+
           if (!data || !data.success) {
-            console.error('[RIVER-MAP] API returned unsuccessful response');
+
             return;
           }
 
           if (!data.elements || data.elements.length === 0) {
-            console.error('[RIVER-MAP] No elements in API response');
+
             return;
           }
 
           const elements = Array.isArray(data.elements) ? data.elements : [];
-          console.log('[RIVER-MAP] Processing', elements.length, 'polyline segments');
-          
+
           // Clear any existing river lines
           riverLinesRef.current.forEach(line => {
             if (map.current && line) {
               try {
                 map.current.removeLayer(line);
               } catch (e) {
-                console.warn('[RIVER-MAP] Error removing layer:', e);
+
               }
             }
           });
@@ -169,19 +168,18 @@ export default function OhioRiverActivityMap({ locks = [], stations = [], select
                   }).addTo(map.current);
 
                   riverLinesRef.current.push(line);
-                  console.log(`[RIVER-MAP] ✓ Polyline ${idx + 1} created and added to map (${validCoords.length} valid coords)`);
+
                 } else {
-                  console.warn('[RIVER-MAP] Skipping element - not enough valid coordinates after filtering');
+
                 }
               } else {
-                console.warn('[RIVER-MAP] Skipping element - invalid data');
+
               }
             } catch (segmentErr) {
-              console.error(`[RIVER-MAP] Error processing segment ${idx + 1}:`, segmentErr);
+
             }
           });
-          
-          console.log(`[RIVER-MAP] Stored ${riverCoordinatesRef.current.length} total river coordinates for city snapping`);
+
           // Trigger city markers to refresh after river coordinates load
           try {
             setRefreshTrigger(prev => prev + 1);
@@ -202,20 +200,20 @@ export default function OhioRiverActivityMap({ locks = [], stations = [], select
                   maxZoom: 9, // Max zoom 9 to ensure entire river is visible
                   animate: false // No animation on initial load for immediate display
                 });
-                console.log('[RIVER-MAP] ✓ Map fitted to entire Ohio River bounds (Pittsburgh to Cairo)');
+
                 setInitialFitDone(true);
               } else {
-                console.warn('[RIVER-MAP] Bounds are not valid or empty, skipping fit');
+
                 setInitialFitDone(true);
               }
             } catch (fitErr) {
-              console.error('[RIVER-MAP] Error fitting bounds:', fitErr);
+
               setInitialFitDone(true);
             }
           }
         })
         .catch((err) => {
-          console.error('[RIVER-MAP] River outline fetch error:', err);
+
         });
 
       // Add locks as markers
@@ -538,7 +536,7 @@ export default function OhioRiverActivityMap({ locks = [], stations = [], select
       const { point: riverPoint, distance } = findNearestRiverPoint(city.lat, city.lon);
       
       if (!riverPoint || distance > 20) {
-        console.warn('[RIVER-MAP] City too far from river, skipping:', city.name, distance.toFixed(2), 'miles');
+
         return; // Skip if no river point found or too far (>20 miles)
       }
       
@@ -634,7 +632,7 @@ export default function OhioRiverActivityMap({ locks = [], stations = [], select
           `;
           try { marker.setPopupContent(updated); } catch {}
         } catch (e) {
-          console.warn('[RIVER-MAP] Popup data fetch failed for city', city.name, e);
+
         }
       });
 
@@ -670,9 +668,9 @@ export default function OhioRiverActivityMap({ locks = [], stations = [], select
       );
       try {
         map.current.fitBounds(bounds, { padding: [30, 30], maxZoom: 12, animate: true, duration: 0.5 });
-        console.log('[RIVER-MAP] Zoomed to selected item:', selectedItem.name);
+
       } catch (fitErr) {
-        console.warn('[RIVER-MAP] FitBounds failed for selected item, falling back to setView:', fitErr);
+
         map.current.setView([selectedItem.lat, selectedItem.lon], 11, { animate: true, duration: 0.5 });
       }
     }
@@ -689,14 +687,14 @@ export default function OhioRiverActivityMap({ locks = [], stations = [], select
       try {
         map.current.removeLayer(userMarkerRef.current);
       } catch (e) {
-        console.warn('[RIVER-MAP] Error removing user marker:', e);
+
       }
       userMarkerRef.current = null;
     }
     
     // If no user location, stop here (marker already removed)
     if (!userLocation) {
-      console.log('[RIVER-MAP] No user location - marker removed');
+
       prevUserLocationRef.current = null; // Reset so next location will be added
       return;
     }
@@ -728,13 +726,13 @@ export default function OhioRiverActivityMap({ locks = [], stations = [], select
             }, Infinity);
             return Math.min(minDist, lineMinDist);
           } catch (lineErr) {
-            console.warn('[RIVER-MAP] Error calculating distance for line:', lineErr);
+
             return minDist;
           }
         }, Infinity);
       }
     } catch (err) {
-      console.error('[RIVER-MAP] Error checking distance to river:', err);
+
       distanceToRiver = Infinity;
     }
     
@@ -749,7 +747,7 @@ export default function OhioRiverActivityMap({ locks = [], stations = [], select
         })
       }).addTo(map.current);
     } catch (markerErr) {
-      console.error('[RIVER-MAP] Error creating user marker:', markerErr);
+
       return;
     }
     
@@ -763,23 +761,22 @@ export default function OhioRiverActivityMap({ locks = [], stations = [], select
           [lat + latOffset, lon + mileOffset]
         );
         map.current.fitBounds(bounds, { padding: [30, 30], maxZoom: 12, animate: true, duration: 0.5 });
-        
-        console.log('[RIVER-MAP] Zoomed to user location (within 1 mile of river)');
+
       } catch (fitErr) {
-        console.error('[RIVER-MAP] Error fitting bounds for user location:', fitErr);
+
         try {
           map.current.setView([lat, lon], 10, { animate: true, duration: 0.5 });
         } catch (viewErr) {
-          console.error('[RIVER-MAP] Error setting view:', viewErr);
+
         }
       }
     } else {
       // Zoom to show user location even if not near river
       try {
         map.current.setView([lat, lon], 10, { animate: true, duration: 0.5 });
-        console.log('[RIVER-MAP] User location is', distanceToRiver.toFixed(2), 'miles from river - zooming to user location');
+
       } catch (viewErr) {
-        console.error('[RIVER-MAP] Error setting view for user location:', viewErr);
+
       }
     }
   }, [userLocation, mapReady]);

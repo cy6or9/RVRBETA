@@ -22,7 +22,7 @@ function load() {
     }
     return JSON.parse(fs.readFileSync(filePath, "utf8"));
   } catch (err) {
-    console.error("Failed to read articles:", err);
+
     return [];
   }
 }

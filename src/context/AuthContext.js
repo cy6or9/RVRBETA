@@ -58,15 +58,9 @@ export function AuthProvider({ children }) {
       return firebaseLogout();
     },
   };
-
-  // Don't render app content until we know the auth state
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center text-muted-foreground">
-        Loading authentication...
-      </div>
-    );
-  }
-
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider value={value}>
+      {children}
+    </AuthContext.Provider>
+  );
 }

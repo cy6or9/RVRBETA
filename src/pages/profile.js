@@ -59,7 +59,7 @@ export default function ProfilePage() {
       setTimeout(() => setSaveStatus(""), 2000);
     } catch (error) {
       setSaveStatus("Error saving");
-      console.error(error);
+
     }
   };
 
@@ -71,7 +71,7 @@ export default function ProfilePage() {
       setTimeout(() => setSaveStatus(""), 2000);
     } catch (error) {
       setSaveStatus("Error saving");
-      console.error(error);
+
     }
   };
 

@@ -10,14 +10,13 @@ export default async function handler(req, res) {
     const localDataPath = path.join(process.cwd(), 'public', 'geo', 'ohio-river.json');
     if (fs.existsSync(localDataPath)) {
       const localData = JSON.parse(fs.readFileSync(localDataPath, 'utf8'));
-      console.log('[API] Using pre-downloaded USGS data from', localDataPath);
-      
+
       // Handle both old format (single coordinates array) and new format (multiple polylines)
       let elements = [];
       
       if (localData.polylines && Array.isArray(localData.polylines)) {
         // New format: multiple polylines
-        console.log('[API] Using multi-polyline format:', localData.polylines.length, 'segments');
+
         elements = localData.polylines.map(line => ({
           type: 'way',
           name: line.name || 'Ohio River',
@@ -28,7 +27,7 @@ export default async function handler(req, res) {
         }));
       } else if (localData.coordinates && Array.isArray(localData.coordinates)) {
         // Old format: single coordinates array
-        console.log('[API] Using single polyline format');
+
         elements = [{
           type: 'way',
           name: 'Ohio River',
@@ -59,7 +58,6 @@ export default async function handler(req, res) {
       outSR: '4326'
     });
 
-    console.log('[API] Fetching Ohio River data from USGS NHD...');
     const response = await fetch(`${wfsUrl}?${params}`);
     
     if (!response.ok) {
@@ -67,7 +65,6 @@ export default async function handler(req, res) {
     }
 
     const geojson = await response.json();
-    console.log('[API] Received USGS data:', geojson.features?.length, 'features');
 
     if (geojson.features && geojson.features.length > 0) {
       // Extract coordinates from GeoJSON features
@@ -88,7 +85,7 @@ export default async function handler(req, res) {
       }
 
       if (allCoordinates.length > 0) {
-        console.log('[API] Extracted', allCoordinates.length, 'coordinate points from USGS data');
+
         return res.status(200).json({
           success: true,
           source: 'USGS National Hydrography Dataset',
@@ -107,8 +104,7 @@ export default async function handler(req, res) {
     throw new Error('No valid geometry data found in USGS response');
 
   } catch (error) {
-    console.error('[API] Failed to fetch from USGS:', error);
-    
+
     // Try alternative: OpenStreetMap waterway data (better than nothing)
     try {
       const overpassUrl = 'https://overpass-api.de/api/interpreter';
@@ -120,8 +116,7 @@ export default async function handler(req, res) {
         );
         out geom;
       `;
-      
-      console.log('[API] Trying OSM Overpass as fallback...');
+
       const osmResponse = await fetch(overpassUrl, {
         method: 'POST',
         body: 'data=' + encodeURIComponent(query),
@@ -148,7 +143,7 @@ export default async function handler(req, res) {
         }
 
         if (coordinates.length > 0) {
-          console.log('[API] Using OSM data with', coordinates.length, 'points');
+
           return res.status(200).json({
             success: true,
             source: 'OpenStreetMap (fallback)',
@@ -164,11 +159,11 @@ export default async function handler(req, res) {
         }
       }
     } catch (osmError) {
-      console.error('[API] OSM fallback also failed:', osmError);
+
     }
 
     // Final fallback: Use major navigation waypoints based on lock positions
-    console.log('[API] Using static navigation waypoints as last resort');
+
     const navigationWaypoints = [
     // Pittsburgh to Emsworth (Mile 0-6)
     [40.4406, -80.0195], // Pittsburgh - Point State Park

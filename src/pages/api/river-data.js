@@ -72,7 +72,7 @@ async function fetchJSON(url, { timeoutMs = 12000 } = {}) {
   const t = setTimeout(() => ctrl.abort(), timeoutMs);
 
   try {
-    console.log(`[FETCH-START] ${url}`);
+
     const res = await fetch(url, {
       signal: ctrl.signal,
       headers: {
@@ -80,24 +80,24 @@ async function fetchJSON(url, { timeoutMs = 12000 } = {}) {
         "user-agent": "rivervalleyreport/1.0 (+https://rivervalleyreport.com)",
       },
     });
-    console.log(`[FETCH-RESPONSE] ${url} => HTTP ${res.status}`);
+
     if (!res.ok) {
-      console.log(`[FETCH] ${url} => HTTP ${res.status} (not ok)`);
+
       return null;
     }
     const json = await res.json().catch((e) => {
-      console.log(`[FETCH] ${url} => JSON parse failed:`, e.message);
+
       return null;
     });
     if (json && typeof json === "object") {
-      console.log(`[FETCH-SUCCESS] ${url}`);
+
       return json;
     } else {
-      console.log(`[FETCH] ${url} => Invalid JSON object`);
+
       return null;
     }
   } catch (err) {
-    console.log(`[FETCH] ${url} => Error:`, err.message || err.toString());
+
     return null;
   } finally {
     clearTimeout(t);
@@ -111,10 +111,10 @@ async function fetchAhpsHydrographJSON(ahpsId) {
   // Attempt 1: Official NWPS API (National Water Center)
   // This is the primary source for NWPS forecast data
   let url = `https://api.water.noaa.gov/nwps/v1/gauges/${encodeURIComponent(ahpsId)}/hydrograph`;
-  console.log(`[FETCH-NWPS] Attempting official NWPS API v1:`, url);
+
   let result = await fetchJSON(url, { timeoutMs: 14000 });
   if (result && typeof result === "object" && Object.keys(result).length > 0) {
-    console.log(`[FETCH-NWPS] ✓ Official NWPS API v1 succeeded`);
+
     return result;
   }
 
@@ -123,10 +123,10 @@ async function fetchAhpsHydrographJSON(ahpsId) {
   url = `https://water.weather.gov/ahps2/hydrograph_to_xml.php?gage=${encodeURIComponent(
     ahpsId
   )}&output=json`;
-  console.log(`[FETCH-NWPS] Attempting AHPS hydrograph XML (JSON output):`, url);
+
   result = await fetchJSON(url, { timeoutMs: 14000 });
   if (result && typeof result === "object" && Object.keys(result).length > 0) {
-    console.log(`[FETCH-NWPS] ✓ AHPS hydrograph succeeded`);
+
     return result;
   }
 
@@ -134,23 +134,22 @@ async function fetchAhpsHydrographJSON(ahpsId) {
   url = `https://water.noaa.gov/ahps2/hydrograph_to_xml.php?gage=${encodeURIComponent(
     ahpsId
   )}&output=json`;
-  console.log(`[FETCH-NWPS] Attempting water.noaa.gov hydrograph:`, url);
+
   result = await fetchJSON(url, { timeoutMs: 14000 });
   if (result && typeof result === "object" && Object.keys(result).length > 0) {
-    console.log(`[FETCH-NWPS] ✓ water.noaa.gov hydrograph succeeded`);
+
     return result;
   }
 
   // Attempt 4: AHPS REST/service endpoint (fallback)
   url = `https://water.weather.gov/ahps2/service.php?location=${encodeURIComponent(ahpsId)}&output=json`;
-  console.log(`[FETCH-NWPS] Attempting AHPS REST service:`, url);
+
   result = await fetchJSON(url, { timeoutMs: 14000 });
   if (result && typeof result === "object" && Object.keys(result).length > 0) {
-    console.log(`[FETCH-NWPS] ✓ AHPS REST service succeeded`);
+
     return result;
   }
-  
-  console.log(`[FETCH-NWPS] ✗ All NWPS/AHPS endpoints failed for ${ahpsId}`);
+
   return null;
 }
 
@@ -953,7 +952,7 @@ export default async function handler(req, res) {
       time = val?.dateTime || null;
       location = ts?.sourceInfo?.siteName || "Unnamed Station";
     } catch (err) {
-      console.warn("USGS observed parse error", err);
+
     }
 
     /* ---------------------------------------------
@@ -973,7 +972,7 @@ export default async function handler(req, res) {
         .map((v) => ({ t: v.dateTime, v: Number(v.value) }))
         .filter((p) => p.t && Number.isFinite(p.v));
     } catch (err) {
-      console.warn("USGS history parse error", err);
+
     }
 
     const historyPts = historyRaw
@@ -1017,10 +1016,8 @@ export default async function handler(req, res) {
 
     if (ahpsId) {
       usedAhpsId = ahpsId;
-      console.log(`[FORECAST] Starting AHPS fetch for: ${ahpsId}`);
 
       const ahpsJson = await fetchAhpsHydrographJSON(ahpsId);
-      console.log(`[FORECAST] AHPS JSON fetch result:`, ahpsJson ? `received (size: ${JSON.stringify(ahpsJson).length})` : "null/error");
 
       if (ahpsJson) {
         // Flood stage (preferred)
@@ -1028,40 +1025,35 @@ export default async function handler(req, res) {
 
         // issuance time
         forecastIssuedTime = extractNoaaIssuanceTime(ahpsJson);
-        console.log(`[FORECAST] Issuance time:`, forecastIssuedTime);
 
         // Extract best forecast-like stage series from NOAA JSON (robust)
         const best = extractBestNoaaForecastPoints(ahpsJson, { issuanceISO: forecastIssuedTime });
         extractorDebug = best?.why ? String(best.why) : "";
-        console.log(`[FORECAST] Best points found:`, best.points ? `${best.points.length} points (${best.why})` : "none");
 
         // Window + daily-high (future)
         const windowed = filterForecastWindow(best.points || [], { issuanceISO: forecastIssuedTime });
-        console.log(`[FORECAST] After windowing:`, windowed.length, "points");
 
         // Convert to daily highs and keep next 7 days
         let dailyForecast = takeDailyHigh(windowed, { days: 14, takeLast: false }); // make list, then trim by "next 7 from today/issuance"
-        console.log(`[FORECAST] After takeDailyHigh:`, dailyForecast.length, "days");
+
         // dailyForecast is already sorted by day ascending
 
         // Keep only days >= todayKey (or issuanceKey) and take first 7
         const todayKey = chicagoDayKey(new Date().toISOString());
         const issuanceKey = forecastIssuedTime ? chicagoDayKey(forecastIssuedTime) : null;
         const startKey = issuanceKey || todayKey;
-        console.log(`[FORECAST] Start key (issuance or today): ${startKey}`);
 
         if (startKey) {
           const filtered = dailyForecast.filter((p) => {
             const k = chicagoDayKey(p.t);
             return k && k >= startKey;
           });
-          console.log(`[FORECAST] After day filter: ${filtered.length} (was ${dailyForecast.length})`);
+
           // Fallback to unfiltered if issuance-based filter removes all points
           dailyForecast = filtered.length ? filtered : dailyForecast;
         }
 
         dailyForecast = dailyForecast.slice(0, 7);
-        console.log(`[FORECAST] Final daily forecast (slice 0-7): ${dailyForecast.length} points`);
 
         if (dailyForecast.length > 0) {
           // Bias-correct toward the latest observed stage when reasonable
@@ -1069,7 +1061,6 @@ export default async function handler(req, res) {
           prediction = bc.points;
           forecastSource = "NWPS";  // National Water Prediction Service
           forecastType = "Official";
-          console.log(`[FORECAST] SUCCESS: ${prediction.length} points assigned to prediction (NWPS)`);
 
           const conf = computeForecastConfidence({
             issuanceISO: forecastIssuedTime,
@@ -1088,12 +1079,12 @@ export default async function handler(req, res) {
             forecastCoverageNote += ` Bias-corrected to latest observed (Δ ${bc.delta.toFixed(2)} ft).`;
           }
         } else {
-          console.log(`[FORECAST] FAIL: dailyForecast is empty`);
+
           forecastCoverageDays = 0;
           forecastCoverageNote = "No forecast points were found in the NOAA hydrograph JSON.";
         }
       } else {
-        console.log(`[FORECAST] FAIL: ahpsJson is null or falsy`);
+
         forecastCoverageDays = 0;
         forecastCoverageNote = "NOAA hydrograph JSON could not be fetched.";
       }
@@ -1106,8 +1097,7 @@ export default async function handler(req, res) {
     
     // If NOAA failed, generate synthetic forecast from historical trend
     if ((!prediction || prediction.length === 0) && historyDaily.length >= 3) {
-      console.log(`[FORECAST] NOAA forecast unavailable for ${ahpsId || site} — generating synthetic forecast`);
-      
+
       // Try regression-based forecast first (higher fidelity if we have enough IV points)
       let synthetic = generateRegressionForecastFromIV(historyPts, observed, 7);
       
@@ -1122,7 +1112,7 @@ export default async function handler(req, res) {
         forecastType = "Trend-based";
         forecastCoverageDays = prediction.length;
         forecastCoverageNote = `Trend projection based on recent ${historyDaily.length}-day history. NOAA forecasts unavailable.`;
-        console.log(`[FORECAST] Synthetic forecast generated: ${prediction.length} points`);
+
       }
     }
 
@@ -1158,7 +1148,7 @@ export default async function handler(req, res) {
           }
         }
       } catch (err) {
-        console.warn("USGS flood stage parse error", err);
+
       }
     }
 
@@ -1208,9 +1198,7 @@ export default async function handler(req, res) {
     // Ensure we never exceed 7 points for either series
     const historyOut = historyDaily.slice(-7);
     const predictionOut = Array.isArray(prediction) ? prediction.slice(0, 7) : [];
-    
-    console.log(`[FORECAST-FINAL] Returning prediction array with ${predictionOut.length} points`);
-    console.log(`[FORECAST-FINAL] Prediction data:`, JSON.stringify(predictionOut));
+
 
     return res.status(200).json({
       location,
@@ -1229,7 +1217,7 @@ export default async function handler(req, res) {
       ...derived,
     });
   } catch (err) {
-    console.error("River API failure:", err);
+
     return res.status(500).json({ error: "Internal Server Error" });
   }
 }

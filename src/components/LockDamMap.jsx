@@ -64,7 +64,7 @@ export default function LockDamMap() {
         setError(null);
       } catch (err) {
         setError("Unable to load lock data");
-        console.error("Lock data error:", err);
+
       } finally {
         setLoading(false);
       }

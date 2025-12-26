@@ -82,7 +82,7 @@ export default function EditArticlePage() {
       });
     },
     onError: (error) => {
-      console.error("Save mutation failed:", error);
+
       toast({
         title: "Error",
         description:
@@ -118,7 +118,7 @@ export default function EditArticlePage() {
         description: "The image has been uploaded successfully.",
       });
     } catch (error) {
-      console.error("Upload failed:", error);
+
       toast({
         title: "Upload failed",
         description: "Failed to upload image. Please try again.",
