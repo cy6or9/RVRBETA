@@ -66,6 +66,20 @@ export const defaultUserProfile = {
   updatedAt: null,
   email: "",
   displayName: "",
+
+  // Privileges / Subscription
+  privileges: {
+    tier: "Basic", // "Basic" | "Plus" | "Premium"
+  },
+
+  // Login and usage stats
+  stats: {
+    lastLoginAt: null,
+    totalOnlineSeconds: 0,
+  },
+
+  // Last known location (when Find Me is used)
+  lastLocation: null,
 };
 
 /**
@@ -286,6 +300,100 @@ export async function removePreferredStation(userId, stationId) {
     });
   } catch (error) {
 
+  }
+}
+
+/**
+ * Update last login timestamp
+ * @param {string} userId - Firebase user UID
+ * @param {string} email - User email
+ */
+export async function updateLastLogin(userId, email) {
+  if (!firebaseEnabled || !db) return;
+
+  try {
+    const userRef = doc(db, "userProfiles", userId);
+    const docSnap = await getDoc(userRef);
+
+    if (docSnap.exists()) {
+      // Update existing profile
+      await updateDoc(userRef, {
+        "stats.lastLoginAt": serverTimestamp(),
+        email,
+        updatedAt: serverTimestamp(),
+      });
+    } else {
+      // Create new profile with login info
+      await setDoc(userRef, {
+        ...defaultUserProfile,
+        uid: userId,
+        email,
+        stats: {
+          lastLoginAt: serverTimestamp(),
+          totalOnlineSeconds: 0,
+        },
+        privileges: {
+          tier: "Basic",
+        },
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    }
+  } catch (error) {
+    console.error("Error updating last login:", error);
+  }
+}
+
+/**
+ * Add online time to user's total
+ * @param {string} userId - Firebase user UID
+ * @param {number} seconds - Number of seconds to add
+ */
+export async function addOnlineSeconds(userId, seconds) {
+  if (!firebaseEnabled || !db) return;
+  if (seconds <= 0) return;
+
+  try {
+    const userRef = doc(db, "userProfiles", userId);
+    const docSnap = await getDoc(userRef);
+
+    if (docSnap.exists()) {
+      const currentSeconds = docSnap.data()?.stats?.totalOnlineSeconds || 0;
+      await updateDoc(userRef, {
+        "stats.totalOnlineSeconds": currentSeconds + seconds,
+        updatedAt: serverTimestamp(),
+      });
+    }
+  } catch (error) {
+    console.error("Error adding online seconds:", error);
+  }
+}
+
+/**
+ * Update user's last known location (from Find Me)
+ * @param {string} userId - Firebase user UID
+ * @param {object} location - Location data
+ * @param {number} location.lat - Latitude
+ * @param {number} location.lon - Longitude
+ * @param {string} [location.city] - City name
+ * @param {string} [location.state] - State name
+ */
+export async function updateUserLocation(userId, location) {
+  if (!firebaseEnabled || !db) return;
+  if (!location?.lat || !location?.lon) return;
+
+  try {
+    await updateUserProfile(userId, {
+      lastLocation: {
+        lat: location.lat,
+        lon: location.lon,
+        city: location.city || null,
+        state: location.state || null,
+        updatedAt: serverTimestamp(),
+      },
+    });
+  } catch (error) {
+    console.error("Error updating user location:", error);
   }
 }
 

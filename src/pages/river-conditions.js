@@ -6,6 +6,8 @@ import LockDamMap from "@/components/LockDamMap";
 import OhioRiverActivityMap from "@/components/OhioRiverActivityMap";
 import { ohioRiverLocks } from "@/lib/locks";
 import { useUserProfile } from "@/context/UserProfileContext";
+import { useAuth } from "@/context/AuthContext";
+import { updateUserLocation } from "@/lib/userProfile";
 
 /* ---------------------------------------------------
    Station List (Ohio River full chain)
@@ -638,6 +640,7 @@ export default function RiverConditions() {
   const defaultStation = stations.find((s) => s.id === "03322420") ?? stations[0];
 
   const { profile, saveMapPreferences, updateCachedRiverData, updateCachedForecast, toggleFavorite } = useUserProfile();
+  const { user } = useAuth();
 
   const [selected, setSelected] = useState(defaultStation);
   const [selectedDam, setSelectedDam] = useState(null);
@@ -1059,6 +1062,20 @@ export default function RiverConditions() {
               setUserCityState(data.location);
 
               geocodeSuccess = true;
+              
+              // Save location to user profile if logged in
+              if (user?.uid) {
+                try {
+                  await updateUserLocation(user.uid, {
+                    lat: userLat,
+                    lon: userLon,
+                    city: data.location.city,
+                    state: data.location.state,
+                  });
+                } catch (error) {
+                  console.error("Error saving user location:", error);
+                }
+              }
             } else {
 
             }
