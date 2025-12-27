@@ -1,7 +1,6 @@
 // /src/lib/firebase.js
 // Firebase v9 modular SDK with Google Auth enabled
-// This version is safe for local dev WITHOUT Firebase env vars
-// and works the same in production (Netlify) when env vars exist.
+// Validates configuration and provides helpful warnings
 
 import { initializeApp, getApps } from "firebase/app";
 import {
@@ -22,7 +21,7 @@ const firebaseConfig = {
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
 };
 
-// All values must be present to safely enable Firebase
+// Check if all required values are present
 export const firebaseEnabled =
   !!firebaseConfig.apiKey &&
   !!firebaseConfig.authDomain &&
@@ -36,22 +35,29 @@ let auth = null;
 let provider = null;
 
 if (firebaseEnabled) {
-  app = !getApps().length ? initializeApp(firebaseConfig) : getApps()[0];
-  auth = getAuth(app);
+  try {
+    app = !getApps().length ? initializeApp(firebaseConfig) : getApps()[0];
+    auth = getAuth(app);
 
-  provider = new GoogleAuthProvider();
-  provider.setCustomParameters({
-    prompt: "select_account",
-  });
+    provider = new GoogleAuthProvider();
+    provider.setCustomParameters({
+      prompt: "select_account",
+    });
 
-  // Persist login across page reloads
-  setPersistence(auth, browserLocalPersistence).catch((err) => {
-
-  });
+    // Persist login across page reloads
+    setPersistence(auth, browserLocalPersistence).catch((err) => {
+      console.error("[Firebase] Failed to set persistence:", err);
+    });
+  } catch (error) {
+    console.error("[Firebase] Initialization failed:", error.message);
+  }
 } else {
-  console.warn(
-    "[Firebase] Env vars missing. Firebase Auth is DISABLED in this environment."
-  );
+  // Non-blocking warning - Firebase is optional in development
+  if (typeof window !== 'undefined') {
+    console.warn(
+      "[Firebase] Missing env vars. Set NEXT_PUBLIC_FIREBASE_* variables to enable authentication."
+    );
+  }
 }
 
 // Export these so existing imports keep working.
@@ -71,7 +77,10 @@ export async function loginWithGoogle() {
 }
 
 export async function logoutUser() {
-  if (!firebaseEnabled || !auth) return;
+  if (!firebaseEnabled || !auth) {
+    console.warn("[Firebase] Cannot logout - Firebase not initialized");
+    return;
+  }
   return signOut(auth);
 }
 

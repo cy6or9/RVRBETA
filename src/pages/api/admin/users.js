@@ -2,7 +2,7 @@
 // Admin API endpoint to fetch all user profiles from Firestore
 // Returns user data including privileges, login stats, and location info
 
-import { firestore } from "@/lib/firebaseAdmin";
+import { adminDb } from "@/lib/firebaseAdmin";
 
 /**
  * Admin API handler for user management
@@ -16,7 +16,7 @@ export default async function handler(req, res) {
 
   try {
     // Fetch all user profiles from Firestore
-    const usersSnapshot = await firestore.collection("userProfiles").get();
+    const usersSnapshot = await adminDb.collection("userProfiles").get();
 
     if (usersSnapshot.empty) {
       return res.status(200).json([]);

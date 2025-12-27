@@ -42,6 +42,9 @@ export default function AdminUserPrivilegesPage() {
       }
       return response.json();
     },
+    retry: false, // Don't retry on failure to prevent infinite loops
+    refetchOnWindowFocus: false, // Don't refetch when window gains focus
+    staleTime: 5 * 60 * 1000, // Consider data fresh for 5 minutes
   });
 
   // Format time spent online

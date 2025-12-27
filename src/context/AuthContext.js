@@ -3,13 +3,14 @@
 // Optimized to prevent Firestore offline errors and excessive writes
 
 import { createContext, useContext, useEffect, useState, useRef, useMemo } from "react";
+import { useRouter } from "next/router";
 import {
   auth,
   loginWithGoogle as firebaseLogin,
   logoutUser as firebaseLogout,
   firebaseEnabled,
 } from "@/lib/firebase";
-import { onAuthStateChanged } from "firebase/auth";
+import { onAuthStateChanged, signOut } from "firebase/auth";
 import { 
   setLastLogin,
   setLastLogout,
@@ -22,6 +23,7 @@ export const useAuth = () => useContext(AuthContext);
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const router = useRouter();
   const sessionStartRef = useRef(null);
   const loginRecordedRef = useRef(false);
 
@@ -29,6 +31,9 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     // If Firebase isn't configured (e.g. local dev), skip the listener
     if (!firebaseEnabled || !auth) {
+      console.warn(
+        "[AuthContext] Firebase not configured. Set NEXT_PUBLIC_FIREBASE_* environment variables to enable authentication."
+      );
       setUser(null);
       setLoading(false);
       return;
@@ -133,7 +138,10 @@ export function AuthProvider({ children }) {
       return firebaseLogin();
     },
     logout: async () => {
-      if (!firebaseEnabled) return;
+      if (!firebaseEnabled || !auth) {
+        console.warn("[AuthContext] Cannot logout - Firebase not initialized");
+        return;
+      }
       
       // Save session before logout
       if (sessionStartRef.current && user) {
@@ -150,9 +158,16 @@ export function AuthProvider({ children }) {
         loginRecordedRef.current = false;
       }
       
-      return firebaseLogout();
+      // Sign out and redirect
+      try {
+        await signOut(auth);
+        setUser(null);
+        router.push("/login");
+      } catch (error) {
+        console.error("[AuthContext] Logout failed:", error);
+      }
     },
-  }), [user, isAdmin, loading]);
+  }), [user, isAdmin, loading, router]);
 
   return (
     <AuthContext.Provider value={value}>
