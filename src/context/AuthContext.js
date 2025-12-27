@@ -4,11 +4,12 @@
 import { createContext, useContext, useEffect, useState, useRef, useMemo, useCallback } from "react";
 import { useRouter } from "next/router";
 import { auth } from "@/lib/firebase";
-import { onAuthStateChanged, signOut } from "firebase/auth";
+import { onAuthStateChanged, signOut, getRedirectResult } from "firebase/auth";
 import { 
   setLastLogin,
   setLastLogout,
-  saveSessionDuration 
+  saveSessionDuration,
+  createUserProfile
 } from "@/lib/userProfile";
 
 const AuthContext = createContext(null);
@@ -20,6 +21,46 @@ export function AuthProvider({ children }) {
   const router = useRouter();
   const sessionStartRef = useRef(null);
   const loginRecordedRef = useRef(false);
+
+  // Handle redirect result from Google Sign-In
+  useEffect(() => {
+    getRedirectResult(auth)
+      .then(async (result) => {
+        if (result && result.user) {
+          console.log("[AuthContext] Redirect login successful:", result.user.email);
+          
+          // Create user profile if needed
+          try {
+            await createUserProfile(result.user.uid, {
+              email: result.user.email,
+              displayName: result.user.displayName,
+              photoURL: result.user.photoURL,
+            });
+          } catch (error) {
+            console.error("[AuthContext] Error creating user profile:", error);
+          }
+          
+          // Record login
+          try {
+            await setLastLogin(result.user.uid, result.user.email);
+          } catch (error) {
+            console.error("[AuthContext] Error recording login:", error);
+          }
+          
+          // Set session start
+          sessionStartRef.current = Date.now();
+          loginRecordedRef.current = true;
+          
+          // User state will be set by onAuthStateChanged
+        }
+      })
+      .catch((error) => {
+        console.error("[AuthContext] Redirect login error:", error);
+        if (error.code !== 'auth/popup-closed-by-user') {
+          alert("Login failed: " + error.message);
+        }
+      });
+  }, []);
 
   // Single auth state listener
   useEffect(() => {

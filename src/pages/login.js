@@ -34,7 +34,10 @@ export default function LoginPage() {
 
   const handleLogin = async () => {
     try {
+      // loginWithGoogle uses redirect - user will be redirected to Google
+      // After Google auth, they'll return to this app and getRedirectResult will handle it
       await loginWithGoogle();
+      // Note: Code after this won't run because browser redirects to Google
     } catch (err) {
       console.error("Login error:", err);
       alert("Google sign-in failed. Please try again.");

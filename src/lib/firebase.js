@@ -6,7 +6,8 @@ import { initializeApp, getApps, getApp } from "firebase/app";
 import {
   getAuth,
   GoogleAuthProvider,
-  signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
   signOut,
   setPersistence,
   browserLocalPersistence,
@@ -49,7 +50,7 @@ if (firebaseEnabled && typeof window !== 'undefined') {
 }
 
 // Export app and provider
-export { app, provider, firebaseEnabled };
+export { app, provider, firebaseEnabled, getRedirectResult };
 
 // --- AUTH HELPERS ---
 
@@ -57,7 +58,8 @@ export async function loginWithGoogle() {
   if (!firebaseEnabled) {
     throw new Error("Firebase Auth is not configured. Please set environment variables.");
   }
-  return signInWithPopup(auth, provider);
+  // Use redirect instead of popup to avoid COOP errors
+  await signInWithRedirect(auth, provider);
 }
 
 export async function logoutUser() {

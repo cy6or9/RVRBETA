@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import Link from "next/link";
+import { Loader2 } from "lucide-react";
 import Header from "@/components/Header";
 import Footer from "@/components/Footer";
 import LockDamMap from "@/components/LockDamMap";
@@ -649,6 +650,7 @@ export default function RiverConditions() {
   const [weather, setWeather] = useState(null);
   const [aqi, setAqi] = useState(null);
   const [findMeInfo, setFindMeInfo] = useState(null);
+  const [loadingLocation, setLoadingLocation] = useState(false);
   const [userLocation, setUserLocation] = useState(null); // Track user location for map
   const [userCityState, setUserCityState] = useState(null); // User's city and state
   const [mapType, setMapType] = useState("lock"); // "marine", "lock", or "topo"
@@ -1122,6 +1124,7 @@ export default function RiverConditions() {
     // If Find Me is already active, toggle it off
     if (userLocation) {
       // Clear Find Me state
+      setLoadingLocation(false);
       setUserLocation(null);
       setUserCityState(null);
       setFindMeInfo(null);
@@ -1150,6 +1153,8 @@ export default function RiverConditions() {
       alert("Geolocation is not supported by this browser.");
       return;
     }
+
+    setLoadingLocation(true);
 
     navigator.geolocation.getCurrentPosition(
       async ({ coords }) => {
@@ -1333,8 +1338,12 @@ export default function RiverConditions() {
             }, 500);
           }
         }
+        
+        // Clear loading state
+        setLoadingLocation(false);
       },
       (err) => {
+        setLoadingLocation(false);
 
         let errorMsg = "Unable to get location.";
         
@@ -1788,17 +1797,22 @@ export default function RiverConditions() {
 
           <button
             onClick={locateMe}
+            disabled={loadingLocation}
             className={`px-4 py-2 rounded-lg font-semibold shadow flex items-center gap-2 text-sm ${
               userLocation 
                 ? 'bg-orange-600 hover:bg-orange-700' 
                 : 'bg-cyan-600 hover:bg-cyan-700'
-            }`}
+            } ${loadingLocation ? 'opacity-70 cursor-not-allowed' : ''}`}
           >
-            <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="12" cy="12" r="3" />
-              <path d="M12 2v4M12 18v4M4 12h4M16 12h4" />
-            </svg>
-            {userLocation ? 'Clear Location' : 'Find Me'}
+            {loadingLocation ? (
+              <Loader2 className="w-[18px] h-[18px] animate-spin" />
+            ) : (
+              <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="12" cy="12" r="3" />
+                <path d="M12 2v4M12 18v4M4 12h4M16 12h4" />
+              </svg>
+            )}
+            {loadingLocation ? 'Locating...' : (userLocation ? 'Clear Location' : 'Find Me')}
           </button>
 
           <div className="text-xs text-right">
