@@ -18,6 +18,12 @@ const KNOWN_TOWNS = {
   "Union County, Kentucky": [
     { name: "Uniontown", lat: 37.7683, lon: -87.9480 },
   ],
+  "Henderson County, Kentucky": [
+    { name: "Henderson", lat: 37.8361, lon: -87.5900 },
+    { name: "Corydon", lat: 37.7406, lon: -87.7019 },
+    { name: "Robards", lat: 37.6808, lon: -87.5453 },
+    { name: "Spottsville", lat: 37.8383, lon: -87.4147 },
+  ],
 };
 
 function getStateAbbrev(stateName) {
@@ -44,8 +50,8 @@ function findNearestKnownTown(county, state, userLat, userLon) {
     }
   }
   
-  // Return if within ~30km (0.27 degrees squared)
-  return closestDist < 0.27 ? closest : null;
+  // Return if within ~50km (0.5 degrees squared ~ 50km)
+  return closestDist < 0.25 ? closest : null;
 }
 
 export default async function handler(req, res) {
@@ -225,22 +231,33 @@ export default async function handler(req, res) {
     const county = data.address.county;
     const state = data.address.state;
 
-    // Build formatted location string - prioritize: City/Town > County > State
+    // Build formatted location string - Format: "City, State (County)"
     let locationStr = '';
     const stateAbbrev = getStateAbbrev(state);
     
+    // If we have a city/town, use "City, State (County)" format
     if (city && state) {
-      // Primary: City, State format
       locationStr = `${city}, ${stateAbbrev}`;
-      // Add county in parentheses if it's different from city name
-      if (county && county.toLowerCase() !== city.toLowerCase()) {
+      // Add county in parentheses if available and different from city name
+      if (county && !county.toLowerCase().includes(city.toLowerCase())) {
         locationStr += ` (${county})`;
       }
-    } else if (county && state) {
-      // Fallback: County, State if no city
-      locationStr = `${county}, ${stateAbbrev}`;
-    } else if (state) {
-      // Last resort: State only
+    } 
+    // If no city found but we have county, extract potential town name from county
+    else if (county && state) {
+      // Try to extract town name from county name (e.g., "Henderson County" -> "Henderson")
+      const countyBase = county.replace(/\s+County$/i, '').trim();
+      if (countyBase && countyBase !== county) {
+        // County name had "County" suffix, use the base as town name
+        locationStr = `${countyBase}, ${stateAbbrev} (${county})`;
+        city = countyBase; // Set city for return value
+      } else {
+        // No "County" suffix found, fallback to full county name
+        locationStr = `${county}, ${stateAbbrev}`;
+      }
+    } 
+    // Last resort: State only
+    else if (state) {
       locationStr = stateAbbrev;
     }
 

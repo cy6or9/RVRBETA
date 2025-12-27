@@ -729,39 +729,154 @@ export default function RiverConditions() {
 
   async function loadWeather(lat, lon) {
     try {
-      const res = await fetch(
-          `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true&hourly=precipitation_probability,windgusts_10m&daily=temperature_2m_max,temperature_2m_min&forecast_days=1&timezone=America/Chicago`
+      // Step 1: Get the NWS grid point for this location
+      const pointRes = await fetch(
+        `https://api.weather.gov/points/${lat.toFixed(4)},${lon.toFixed(4)}`,
+        { headers: { 'User-Agent': 'RiverValleyReport (contact@rivervalleyreport.com)' } }
       );
-      if (!res.ok) throw new Error("Weather error");
-      const json = await res.json();
-      const cw = json.current_weather;
-
-      // Calculate today's high wind gust from hourly data
-      const todayWindGusts = json.hourly?.windgusts_10m || [];
-      const maxWindGustKmh = todayWindGusts.length > 0 ? Math.max(...todayWindGusts.filter(g => g != null)) : cw.windspeed;
-      const maxWindGustMph = maxWindGustKmh * 0.621371;
-
-      const tempHighC = json.daily?.temperature_2m_max?.[0];
-      const tempLowC = json.daily?.temperature_2m_min?.[0];
+      
+      if (!pointRes.ok) throw new Error("NWS point lookup failed");
+      const pointData = await pointRes.json();
+      
+      // Step 2: Get the forecast from the grid endpoint
+      const forecastUrl = pointData.properties.forecast;
+      const observationStationsUrl = pointData.properties.observationStations;
+      
+      // Fetch forecast data
+      const forecastRes = await fetch(forecastUrl, {
+        headers: { 'User-Agent': 'RiverValleyReport (contact@rivervalleyreport.com)' }
+      });
+      if (!forecastRes.ok) throw new Error("NWS forecast failed");
+      const forecastData = await forecastRes.json();
+      
+      // Get current period (now) and today's periods for high/low
+      const periods = forecastData.properties.periods || [];
+      const currentPeriod = periods[0];
+      
+      if (!currentPeriod) throw new Error("No forecast periods available");
+      
+      // Find today's high and low from day/night periods
+      const todayPeriods = periods.slice(0, 2); // Current + next period usually covers day/night
+      const temps = todayPeriods.map(p => p.temperature).filter(t => t != null);
+      const tempHigh = Math.max(...temps);
+      const tempLow = Math.min(...temps);
+      
+      // Step 3: Try to get actual observations from nearest station
+      let currentTemp = currentPeriod.temperature;
+      let windSpeed = parseInt(currentPeriod.windSpeed) || 0;
+      let windGust = windSpeed * 1.3; // Estimate gust as 1.3x sustained
+      let windDirection = currentPeriod.windDirection;
+      
+      try {
+        const stationsRes = await fetch(observationStationsUrl, {
+          headers: { 'User-Agent': 'RiverValleyReport (contact@rivervalleyreport.com)' }
+        });
+        if (stationsRes.ok) {
+          const stationsData = await stationsRes.json();
+          const stationId = stationsData.features?.[0]?.properties?.stationIdentifier;
+          
+          if (stationId) {
+            const obsRes = await fetch(
+              `https://api.weather.gov/stations/${stationId}/observations/latest`,
+              { headers: { 'User-Agent': 'RiverValleyReport (contact@rivervalleyreport.com)' } }
+            );
+            if (obsRes.ok) {
+              const obsData = await obsRes.json();
+              const obs = obsData.properties;
+              
+              // Use actual observations if available
+              if (obs.temperature?.value != null) {
+                currentTemp = (obs.temperature.value * 9/5) + 32; // C to F
+              }
+              if (obs.windSpeed?.value != null) {
+                windSpeed = obs.windSpeed.value * 0.621371; // km/h to mph
+              }
+              if (obs.windGust?.value != null) {
+                windGust = obs.windGust.value * 0.621371; // km/h to mph
+              } else {
+                windGust = windSpeed * 1.3; // Estimate
+              }
+              if (obs.windDirection?.value != null) {
+                windDirection = Math.round(obs.windDirection.value);
+              }
+            }
+          }
+        }
+      } catch (obsErr) {
+        console.log("Using forecast data (observations unavailable)");
+      }
+      
+      // Parse wind direction to degrees if it's a string like "NW"
+      let windDeg = typeof windDirection === 'string' 
+        ? parseWindDirection(windDirection) 
+        : windDirection || 0;
 
       const w = {
-        tempF: cw.temperature * 1.8 + 32,
-        tempHighF: tempHighC ? (tempHighC * 1.8 + 32) : null,
-        tempLowF: tempLowC ? (tempLowC * 1.8 + 32) : null,
-        windMph: cw.windspeed * 0.621371,
-        windGustMph: (cw.windgusts || cw.windspeed) * 0.621371,
-        windGustHighMph: maxWindGustMph, // Today's high wind gust
-        windDir: windDirLabel(cw.winddirection),
-        windDeg: cw.winddirection,
-        precip: json.hourly?.precipitation_probability?.[0] ?? 0,
-        code: cw.weathercode,
+        tempF: currentTemp,
+        tempHighF: tempHigh,
+        tempLowF: tempLow,
+        windMph: windSpeed,
+        windGustMph: windGust,
+        windGustHighMph: windGust, // NWS doesn't provide daily max gust easily
+        windDir: windDirLabel(windDeg),
+        windDeg: windDeg,
+        precip: currentPeriod.probabilityOfPrecipitation?.value ?? 0,
+        code: 0, // NWS doesn't use numeric codes
+        shortForecast: currentPeriod.shortForecast,
+        source: 'NWS'
       };
 
       lastGoodWeatherRef.current = w;
       setWeather(w);
-    } catch {
-      if (lastGoodWeatherRef.current) setWeather(lastGoodWeatherRef.current);
+    } catch (err) {
+      console.error("NWS weather error:", err);
+      // Fallback to Open-Meteo if NWS fails
+      try {
+        const res = await fetch(
+          `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true&hourly=precipitation_probability,windgusts_10m&daily=temperature_2m_max,temperature_2m_min&forecast_days=1&timezone=America/Chicago`
+        );
+        if (!res.ok) throw new Error("Weather fallback error");
+        const json = await res.json();
+        const cw = json.current_weather;
+
+        const todayWindGusts = json.hourly?.windgusts_10m || [];
+        const maxWindGustKmh = todayWindGusts.length > 0 ? Math.max(...todayWindGusts.filter(g => g != null)) : cw.windspeed;
+        const maxWindGustMph = maxWindGustKmh * 0.621371;
+
+        const tempHighC = json.daily?.temperature_2m_max?.[0];
+        const tempLowC = json.daily?.temperature_2m_min?.[0];
+
+        const w = {
+          tempF: cw.temperature * 1.8 + 32,
+          tempHighF: tempHighC ? (tempHighC * 1.8 + 32) : null,
+          tempLowF: tempLowC ? (tempLowC * 1.8 + 32) : null,
+          windMph: cw.windspeed * 0.621371,
+          windGustMph: (cw.windgusts || cw.windspeed) * 0.621371,
+          windGustHighMph: maxWindGustMph,
+          windDir: windDirLabel(cw.winddirection),
+          windDeg: cw.winddirection,
+          precip: json.hourly?.precipitation_probability?.[0] ?? 0,
+          code: cw.weathercode,
+          source: 'Open-Meteo'
+        };
+
+        lastGoodWeatherRef.current = w;
+        setWeather(w);
+      } catch {
+        if (lastGoodWeatherRef.current) setWeather(lastGoodWeatherRef.current);
+      }
     }
+  }
+
+  // Helper to convert wind direction abbreviations to degrees
+  function parseWindDirection(dir) {
+    const directions = {
+      'N': 0, 'NNE': 22, 'NE': 45, 'ENE': 67,
+      'E': 90, 'ESE': 112, 'SE': 135, 'SSE': 157,
+      'S': 180, 'SSW': 202, 'SW': 225, 'WSW': 247,
+      'W': 270, 'WNW': 292, 'NW': 315, 'NNW': 337
+    };
+    return directions[dir] || 0;
   }
 
   async function loadAQI(lat, lon) {
@@ -1011,8 +1126,15 @@ export default function RiverConditions() {
       setUserCityState(null);
       setFindMeInfo(null);
       
-      // Find nearest station to the river center and snap to it
-      const nearestStation = findDownstreamStation(37.77, -87.5747, stations);
+      // Find nearest station to the river center and snap to it (J.T. Myers L&D area)
+      const centerLat = 37.77;
+      const centerLon = -87.5747;
+      const nearestStation = stations.reduce((prev, curr) => {
+        const prevDist = Math.hypot(prev.lat - centerLat, prev.lon - centerLon);
+        const currDist = Math.hypot(curr.lat - centerLat, curr.lon - centerLon);
+        return currDist < prevDist ? curr : prev;
+      });
+      
       if (nearestStation) {
         setSelected(nearestStation);
         setSelectedDam(null); // Clear dam selection
@@ -1165,9 +1287,11 @@ export default function RiverConditions() {
             return currDist < prevDist ? curr : prev;
           });
           
+          // Set lock and station for river data, but keep user's location for weather
           setSelectedDam(downstreamLock); // Select the lock
           setSelected(nearestStation); // Use nearest station for river data
-          setWxLoc({ lat: downstreamLock.lat, lon: downstreamLock.lon });
+          // DO NOT change wxLoc - keep user's actual location for weather
+          // DO NOT change userCityState - keep user's actual location name
           setMapCenter({ lat: downstreamLock.lat, lon: downstreamLock.lon });
 
           const info = buildFindMeInfo(
