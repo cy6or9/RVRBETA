@@ -99,13 +99,17 @@ export function AuthProvider({ children }) {
 
   // Logout function
   const logout = useCallback(async () => {
+    console.log("[AuthContext] Logout called");
+    
     // Save session before logout
     if (sessionStartRef.current && user) {
+      console.log("[AuthContext] Saving session before logout");
       const elapsedSeconds = Math.floor((Date.now() - sessionStartRef.current) / 1000);
       if (elapsedSeconds > 5) {
         try {
           await saveSessionDuration(user.uid, elapsedSeconds);
           await setLastLogout(user.uid);
+          console.log("[AuthContext] Session saved successfully");
         } catch (error) {
           console.error("Error saving session on manual logout:", error);
         }
@@ -116,11 +120,15 @@ export function AuthProvider({ children }) {
     
     // Sign out and redirect
     try {
+      console.log("[AuthContext] Calling signOut");
       await signOut(auth);
+      console.log("[AuthContext] SignOut successful, clearing user state");
       setUser(null);
+      console.log("[AuthContext] Redirecting to /login");
       router.push("/login");
     } catch (error) {
       console.error("[AuthContext] Logout failed:", error);
+      alert("Logout failed: " + error.message);
     }
   }, [user, router]);
 

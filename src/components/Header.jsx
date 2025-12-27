@@ -59,7 +59,10 @@ export default function Header() {
                   </Link>
                 )}
                 <button
-                  onClick={logout}
+                  onClick={() => {
+                    console.log("[Header] Logout button clicked");
+                    logout();
+                  }}
                   className="text-xs text-foreground/70 hover:text-[hsl(142,70%,35%)] transition-colors"
                 >
                   Logout
