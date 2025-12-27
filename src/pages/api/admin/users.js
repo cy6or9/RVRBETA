@@ -5,12 +5,16 @@
 import { adminDb } from "@/lib/firebaseAdmin";
 
 export default async function handler(req, res) {
+  console.log("[API /admin/users] Request received");
+  
   if (req.method !== "GET") {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
   try {
+    console.log("[API /admin/users] Attempting to fetch userProfiles collection");
     const snapshot = await adminDb.collection("userProfiles").get();
+    console.log("[API /admin/users] Successfully fetched", snapshot.size, "users");
 
     const users = snapshot.docs.map((doc) => {
       const data = doc.data();
@@ -60,12 +64,16 @@ export default async function handler(req, res) {
       };
     });
 
+    console.log("[API /admin/users] Returning", users.length, "users");
     res.status(200).json(users);
   } catch (error) {
     console.error("[/api/admin/users] Error:", error);
+    console.error("[/api/admin/users] Error stack:", error.stack);
+    console.error("[/api/admin/users] Error code:", error.code);
     res.status(500).json({
       error: "Internal Server Error",
       details: String(error.message),
+      code: error.code,
     });
   }
 }
