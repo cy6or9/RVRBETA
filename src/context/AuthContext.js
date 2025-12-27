@@ -1,7 +1,7 @@
 // /src/context/AuthContext.js
 // Central authentication state + admin role check
 
-import { createContext, useContext, useEffect, useState, useRef, useMemo } from "react";
+import { createContext, useContext, useEffect, useState, useRef, useMemo, useCallback } from "react";
 import { useRouter } from "next/router";
 import { auth } from "@/lib/firebase";
 import { onAuthStateChanged, signOut } from "firebase/auth";
@@ -98,7 +98,7 @@ export function AuthProvider({ children }) {
   }, [user, adminEmails]);
 
   // Logout function
-  const logout = async () => {
+  const logout = useCallback(async () => {
     // Save session before logout
     if (sessionStartRef.current && user) {
       const elapsedSeconds = Math.floor((Date.now() - sessionStartRef.current) / 1000);
@@ -122,7 +122,7 @@ export function AuthProvider({ children }) {
     } catch (error) {
       console.error("[AuthContext] Logout failed:", error);
     }
-  };
+  }, [user, router]);
 
   // Memoize context value to prevent unnecessary re-renders
   const value = useMemo(() => ({
