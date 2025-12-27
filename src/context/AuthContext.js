@@ -1,15 +1,9 @@
 // /src/context/AuthContext.js
 // Central authentication state + admin role check
-// Optimized to prevent Firestore offline errors and excessive writes
 
 import { createContext, useContext, useEffect, useState, useRef, useMemo } from "react";
 import { useRouter } from "next/router";
-import {
-  auth,
-  loginWithGoogle as firebaseLogin,
-  logoutUser as firebaseLogout,
-  firebaseEnabled,
-} from "@/lib/firebase";
+import { auth } from "@/lib/firebase";
 import { onAuthStateChanged, signOut } from "firebase/auth";
 import { 
   setLastLogin,
@@ -27,23 +21,13 @@ export function AuthProvider({ children }) {
   const sessionStartRef = useRef(null);
   const loginRecordedRef = useRef(false);
 
-  // Single auth state listener - no chained effects
+  // Single auth state listener
   useEffect(() => {
-    // If Firebase isn't configured (e.g. local dev), skip the listener
-    if (!firebaseEnabled || !auth) {
-      console.warn(
-        "[AuthContext] Firebase not configured. Set NEXT_PUBLIC_FIREBASE_* environment variables to enable authentication."
-      );
-      setUser(null);
-      setLoading(false);
-      return;
-    }
-
     const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
       // Handle logout - save session if user is logging out
       if (user && !firebaseUser && sessionStartRef.current) {
         const elapsedSeconds = Math.floor((Date.now() - sessionStartRef.current) / 1000);
-        if (elapsedSeconds > 5) { // Only save if session was meaningful
+        if (elapsedSeconds > 5) {
           try {
             await saveSessionDuration(user.uid, elapsedSeconds);
             await setLastLogout(user.uid);
@@ -60,7 +44,6 @@ export function AuthProvider({ children }) {
         loginRecordedRef.current = true;
         sessionStartRef.current = Date.now();
         
-        // Record login in background - don't block auth state
         setLastLogin(firebaseUser.uid, firebaseUser.email).catch((error) => {
           console.error("Error recording login:", error);
         });
@@ -71,22 +54,14 @@ export function AuthProvider({ children }) {
     });
 
     return () => unsub();
-  }, []); // Run once - no dependencies
+  }, []);
 
   // Handle page close/hide: save session duration
   useEffect(() => {
-    if (!firebaseEnabled) return;
-
     const saveSession = () => {
       if (sessionStartRef.current && user?.uid) {
         const elapsedSeconds = Math.floor((Date.now() - sessionStartRef.current) / 1000);
         if (elapsedSeconds > 5) {
-          // Use sendBeacon for reliable delivery on page unload
-          const data = {
-            uid: user.uid,
-            elapsed: elapsedSeconds,
-          };
-          // Fallback to sync write if sendBeacon not available
           try {
             saveSessionDuration(user.uid, elapsedSeconds).catch(() => {});
             setLastLogout(user.uid).catch(() => {});
@@ -122,52 +97,44 @@ export function AuthProvider({ children }) {
     return !!user && adminEmails.includes(user.email ?? "");
   }, [user, adminEmails]);
 
+  // Logout function
+  const logout = async () => {
+    // Save session before logout
+    if (sessionStartRef.current && user) {
+      const elapsedSeconds = Math.floor((Date.now() - sessionStartRef.current) / 1000);
+      if (elapsedSeconds > 5) {
+        try {
+          await saveSessionDuration(user.uid, elapsedSeconds);
+          await setLastLogout(user.uid);
+        } catch (error) {
+          console.error("Error saving session on manual logout:", error);
+        }
+      }
+      sessionStartRef.current = null;
+      loginRecordedRef.current = false;
+    }
+    
+    // Sign out and redirect
+    try {
+      await signOut(auth);
+      setUser(null);
+      router.push("/login");
+    } catch (error) {
+      console.error("[AuthContext] Logout failed:", error);
+    }
+  };
+
   // Memoize context value to prevent unnecessary re-renders
   const value = useMemo(() => ({
     user,
     isAdmin,
     loading,
     loginWithGoogle: async () => {
-      if (!firebaseEnabled) {
-        alert(
-          "Login is disabled in this local environment because Firebase is not configured.\n\n" +
-            "The live site on RiverValleyReport.com will still work normally."
-        );
-        return;
-      }
-      return firebaseLogin();
+      const { loginWithGoogle: login } = await import("@/lib/firebase");
+      return login();
     },
-    logout: async () => {
-      if (!firebaseEnabled || !auth) {
-        console.warn("[AuthContext] Cannot logout - Firebase not initialized");
-        return;
-      }
-      
-      // Save session before logout
-      if (sessionStartRef.current && user) {
-        const elapsedSeconds = Math.floor((Date.now() - sessionStartRef.current) / 1000);
-        if (elapsedSeconds > 5) {
-          try {
-            await saveSessionDuration(user.uid, elapsedSeconds);
-            await setLastLogout(user.uid);
-          } catch (error) {
-            console.error("Error saving session on manual logout:", error);
-          }
-        }
-        sessionStartRef.current = null;
-        loginRecordedRef.current = false;
-      }
-      
-      // Sign out and redirect
-      try {
-        await signOut(auth);
-        setUser(null);
-        router.push("/login");
-      } catch (error) {
-        console.error("[AuthContext] Logout failed:", error);
-      }
-    },
-  }), [user, isAdmin, loading, router]);
+    logout,
+  }), [user, isAdmin, loading, logout]);
 
   return (
     <AuthContext.Provider value={value}>

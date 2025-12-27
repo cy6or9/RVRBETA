@@ -1,63 +1,40 @@
-// /src/pages/api/admin/users.js
-// Admin API endpoint to fetch all user profiles from Firestore
-// Returns user data including privileges, login stats, and location info
+// /pages/api/admin/users.js
+// Admin API endpoint to fetch all user profiles
+// Returns user list with privileges and stats
 
 import { adminDb } from "@/lib/firebaseAdmin";
 
-/**
- * Admin API handler for user management
- * GET - Returns list of all users with their profiles
- */
 export default async function handler(req, res) {
-  // Only allow GET requests
   if (req.method !== "GET") {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
   try {
-    // Fetch all user profiles from Firestore
-    const usersSnapshot = await adminDb.collection("userProfiles").get();
+    const snapshot = await adminDb.collection("userProfiles").get();
 
-    if (usersSnapshot.empty) {
-      return res.status(200).json([]);
-    }
-
-    // Transform Firestore documents to API response format
-    const users = [];
-
-    usersSnapshot.forEach((doc) => {
+    const users = snapshot.docs.map((doc) => {
       const data = doc.data();
 
-      // Convert Firestore Timestamps to ISO strings and millis
-      let lastLoginAt = null;
-      let lastLoginAtRaw = null;
-
-      if (data.stats?.lastLoginAt) {
+      // Convert Firestore Timestamps to ISO strings
+      const convertTimestamp = (timestamp) => {
+        if (!timestamp) return null;
         try {
-          // Firestore Timestamp has toDate() method
-          if (data.stats.lastLoginAt.toDate) {
-            const date = data.stats.lastLoginAt.toDate();
-            lastLoginAt = date.toISOString();
-            lastLoginAtRaw = date.getTime();
+          if (timestamp.toDate) {
+            return timestamp.toDate().toISOString();
           }
-          // Handle case where it might already be a Date
-          else if (data.stats.lastLoginAt instanceof Date) {
-            lastLoginAt = data.stats.lastLoginAt.toISOString();
-            lastLoginAtRaw = data.stats.lastLoginAt.getTime();
+          if (timestamp instanceof Date) {
+            return timestamp.toISOString();
           }
-          // Handle timestamp object with seconds
-          else if (data.stats.lastLoginAt._seconds) {
-            const date = new Date(data.stats.lastLoginAt._seconds * 1000);
-            lastLoginAt = date.toISOString();
-            lastLoginAtRaw = date.getTime();
+          if (timestamp._seconds) {
+            return new Date(timestamp._seconds * 1000).toISOString();
           }
         } catch (error) {
-          console.error("Error parsing lastLoginAt:", error);
+          console.error("Error converting timestamp:", error);
         }
-      }
+        return null;
+      };
 
-      // Build user object for response
-      const user = {
+      return {
         uid: doc.id,
         email: data.email || "",
         displayName: data.displayName || "",
@@ -65,50 +42,30 @@ export default async function handler(req, res) {
           tier: data.privileges?.tier || "Basic",
         },
         stats: {
-          lastLoginAt,
-          lastLoginAtRaw,
+          lastLoginAt: convertTimestamp(data.stats?.lastLoginAt),
+          lastLoginAtRaw: data.stats?.lastLoginAt?._seconds
+            ? data.stats.lastLoginAt._seconds * 1000
+            : null,
           totalOnlineSeconds: data.stats?.totalOnlineSeconds || 0,
         },
-      };
-
-      // Include location data if available
-      if (data.lastLocation) {
-        user.lastLocation = {
-          lat: data.lastLocation.lat,
-          lon: data.lastLocation.lon,
-          city: data.lastLocation.city || null,
-          state: data.lastLocation.state || null,
-        };
-
-        // Include location timestamp if available
-        if (data.lastLocation.updatedAt) {
-          try {
-            if (data.lastLocation.updatedAt.toDate) {
-              user.lastLocation.updatedAt = data.lastLocation.updatedAt.toDate().toISOString();
+        lastLocation: data.lastLocation
+          ? {
+              lat: data.lastLocation.lat,
+              lon: data.lastLocation.lon,
+              city: data.lastLocation.city || null,
+              state: data.lastLocation.state || null,
+              updatedAt: convertTimestamp(data.lastLocation.updatedAt),
             }
-          } catch (error) {
-            console.error("Error parsing location updatedAt:", error);
-          }
-        }
-      }
-
-      users.push(user);
+          : null,
+      };
     });
 
-    // Sort by last login (most recent first)
-    users.sort((a, b) => {
-      if (!a.stats.lastLoginAtRaw && !b.stats.lastLoginAtRaw) return 0;
-      if (!a.stats.lastLoginAtRaw) return 1;
-      if (!b.stats.lastLoginAtRaw) return -1;
-      return b.stats.lastLoginAtRaw - a.stats.lastLoginAtRaw;
-    });
-
-    return res.status(200).json(users);
+    res.status(200).json(users);
   } catch (error) {
-    console.error("Error fetching users:", error);
-    return res.status(500).json({ 
-      error: "Failed to fetch users",
-      message: error.message 
+    console.error("[/api/admin/users] Error:", error);
+    res.status(500).json({
+      error: "Internal Server Error",
+      details: String(error.message),
     });
   }
 }
