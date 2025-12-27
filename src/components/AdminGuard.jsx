@@ -7,19 +7,18 @@ import { useAuth } from "@/context/AuthContext";
 
 export default function AdminGuard({ children }) {
   const router = useRouter();
-  const { user, isAdmin, loading, logout } = useAuth();
+  const { user, isAdmin, loading } = useAuth();
 
   useEffect(() => {
     if (!loading) {
       if (!user) {
-        router.replace("/login");
+        router.replace("/login?redirect=admin");
       } else if (!isAdmin) {
-        alert("Unauthorized access. Admin privileges required.");
-        logout();
+        alert("Admin privileges required to access this page.");
         router.replace("/");
       }
     }
-  }, [user, isAdmin, loading, router, logout]);
+  }, [user, isAdmin, loading, router]);
 
   if (loading || !user || !isAdmin) {
     return (

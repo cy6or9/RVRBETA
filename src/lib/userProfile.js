@@ -76,6 +76,7 @@ export const defaultUserProfile = {
   // Login and usage stats
   stats: {
     lastLoginAt: null,
+    lastLogoutAt: null,
     totalOnlineSeconds: 0,
   },
 
@@ -91,7 +92,6 @@ export const defaultUserProfile = {
  */
 export async function createUserProfile(userId, initialData = {}) {
   if (!firebaseEnabled || !db) {
-
     return null;
   }
 
@@ -100,6 +100,10 @@ export async function createUserProfile(userId, initialData = {}) {
     const profile = {
       ...defaultUserProfile,
       ...initialData,
+      privileges: {
+        tier: "Basic", // Always default to Basic
+        ...initialData.privileges,
+      },
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     };
@@ -108,7 +112,6 @@ export async function createUserProfile(userId, initialData = {}) {
 
     return profile;
   } catch (error) {
-
     throw error;
   }
 }
@@ -305,11 +308,11 @@ export async function removePreferredStation(userId, stationId) {
 }
 
 /**
- * Update last login timestamp
+ * Update last login timestamp and create profile if missing
  * @param {string} userId - Firebase user UID
  * @param {string} email - User email
  */
-export async function updateLastLogin(userId, email) {
+export async function setLastLogin(userId, email) {
   if (!firebaseEnabled || !db) return;
 
   try {
@@ -324,13 +327,14 @@ export async function updateLastLogin(userId, email) {
         updatedAt: serverTimestamp(),
       });
     } else {
-      // Create new profile with login info
+      // Create new profile with login info and Basic tier
       await setDoc(userRef, {
         ...defaultUserProfile,
         uid: userId,
         email,
         stats: {
           lastLoginAt: serverTimestamp(),
+          lastLogoutAt: null,
           totalOnlineSeconds: 0,
         },
         privileges: {
@@ -341,147 +345,45 @@ export async function updateLastLogin(userId, email) {
       });
     }
   } catch (error) {
-    console.error("Error updating last login:", error);
+    console.error("Error setting last login:", error);
   }
 }
 
 /**
- * Add online time to user's total using Firestore increment
- * This function writes to Firestore - use sparingly (hourly or on offline)
+ * Update last logout timestamp
  * @param {string} userId - Firebase user UID
- * @param {number} seconds - Number of seconds to add
  */
-export async function addOnlineSeconds(userId, seconds) {
+export async function setLastLogout(userId) {
   if (!firebaseEnabled || !db) return;
-  if (seconds <= 0) return;
 
   try {
     const userRef = doc(db, "userProfiles", userId);
     await updateDoc(userRef, {
-      "stats.totalOnlineSeconds": increment(seconds),
+      "stats.lastLogoutAt": serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
   } catch (error) {
-    console.error("Error adding online seconds:", error);
+    console.error("Error setting last logout:", error);
   }
 }
 
-// Session tracking state (client-side only, no Firestore until write)
-let sessionState = {
-  userId: null,
-  sessionStart: null,
-  hourlyTimer: null,
-  offlineHandlersAttached: false,
-};
-
 /**
- * Start tracking a user session
- * Sets up hourly writes and offline detection
+ * Save session duration (called once on logout/tab close)
  * @param {string} userId - Firebase user UID
+ * @param {number} elapsedSeconds - Number of seconds to add
  */
-export function startSessionTracking(userId) {
-  if (!firebaseEnabled || !userId) return;
+export async function saveSessionDuration(userId, elapsedSeconds) {
+  if (!firebaseEnabled || !db) return;
+  if (elapsedSeconds <= 0) return;
 
-  // Stop any existing session first
-  stopSessionTracking();
-
-  // Initialize new session
-  sessionState.userId = userId;
-  sessionState.sessionStart = Date.now();
-
-  // Set up hourly timer to write accumulated time
-  sessionState.hourlyTimer = setInterval(() => {
-    const elapsed = Math.floor((Date.now() - sessionState.sessionStart) / 1000);
-    if (elapsed > 0) {
-      addOnlineSeconds(userId, elapsed);
-      sessionState.sessionStart = Date.now(); // Reset timer
-    }
-  }, 3600000); // 1 hour = 3600000ms
-
-  // Set up offline detection (only once)
-  if (!sessionState.offlineHandlersAttached) {
-    setupOfflineHandlers();
-    sessionState.offlineHandlersAttached = true;
-  }
-}
-
-/**
- * Stop tracking and save accumulated time
- */
-export function stopSessionTracking() {
-  if (!sessionState.userId || !sessionState.sessionStart) return;
-
-  // Calculate and save remaining time
-  const elapsed = Math.floor((Date.now() - sessionState.sessionStart) / 1000);
-  if (elapsed > 0) {
-    addOnlineSeconds(sessionState.userId, elapsed);
-  }
-
-  // Clear timer
-  if (sessionState.hourlyTimer) {
-    clearInterval(sessionState.hourlyTimer);
-    sessionState.hourlyTimer = null;
-  }
-
-  // Reset state
-  sessionState.userId = null;
-  sessionState.sessionStart = null;
-}
-
-/**
- * Set up browser offline/visibility handlers
- */
-function setupOfflineHandlers() {
-  // Save on visibility change (tab hidden/minimized)
-  const handleVisibilityChange = () => {
-    if (document.visibilityState === 'hidden' && sessionState.userId) {
-      const elapsed = Math.floor((Date.now() - sessionState.sessionStart) / 1000);
-      if (elapsed > 0) {
-        addOnlineSeconds(sessionState.userId, elapsed);
-        sessionState.sessionStart = Date.now();
-      }
-    }
-  };
-
-  // Save before page unload
-  const handleBeforeUnload = () => {
-    if (sessionState.userId && sessionState.sessionStart) {
-      const elapsed = Math.floor((Date.now() - sessionState.sessionStart) / 1000);
-      if (elapsed > 0) {
-        // Use sendBeacon for reliability on unload
-        const data = JSON.stringify({ userId: sessionState.userId, seconds: elapsed });
-        // Note: This would require a beacon endpoint, fallback to sync call
-        addOnlineSeconds(sessionState.userId, elapsed);
-      }
-    }
-  };
-
-  // Save on page hide (mobile Safari)
-  const handlePageHide = () => {
-    if (sessionState.userId && sessionState.sessionStart) {
-      const elapsed = Math.floor((Date.now() - sessionState.sessionStart) / 1000);
-      if (elapsed > 0) {
-        addOnlineSeconds(sessionState.userId, elapsed);
-      }
-    }
-  };
-
-  // Attach listeners
-  document.addEventListener('visibilitychange', handleVisibilityChange);
-  window.addEventListener('beforeunload', handleBeforeUnload);
-  window.addEventListener('pagehide', handlePageHide);
-
-  // Handle connection change if available
-  if (navigator.connection) {
-    navigator.connection.addEventListener('change', () => {
-      if (!navigator.onLine && sessionState.userId && sessionState.sessionStart) {
-        const elapsed = Math.floor((Date.now() - sessionState.sessionStart) / 1000);
-        if (elapsed > 0) {
-          addOnlineSeconds(sessionState.userId, elapsed);
-          sessionState.sessionStart = Date.now();
-        }
-      }
+  try {
+    const userRef = doc(db, "userProfiles", userId);
+    await updateDoc(userRef, {
+      "stats.totalOnlineSeconds": increment(elapsedSeconds),
+      updatedAt: serverTimestamp(),
     });
+  } catch (error) {
+    console.error("Error saving session duration:", error);
   }
 }
 

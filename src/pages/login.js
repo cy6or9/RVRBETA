@@ -10,25 +10,33 @@ import { LogIn, Loader2 } from "lucide-react";
 
 export default function LoginPage() {
   const router = useRouter();
-  const { user, isAdmin, loading, logout } = useAuth();
+  const { user, isAdmin, loading } = useAuth();
 
   useEffect(() => {
     if (!loading && user) {
-      if (isAdmin) {
-        router.replace("/admin");
+      // Check if there's a redirect parameter
+      const redirect = router.query.redirect;
+      
+      if (redirect === 'admin') {
+        // User wants to access admin, check if they're admin
+        if (isAdmin) {
+          router.replace("/admin");
+        } else {
+          alert("Admin privileges required. Redirecting to homepage.");
+          router.replace("/");
+        }
       } else {
-        alert("Unauthorized account. Only approved admin users can access this area.");
-        logout();
-        router.replace("/");
+        // Normal login - redirect to river conditions or home
+        router.replace("/river-conditions");
       }
     }
-  }, [loading, user, isAdmin, router, logout]);
+  }, [loading, user, isAdmin, router]);
 
   const handleLogin = async () => {
     try {
       await loginWithGoogle();
     } catch (err) {
-
+      console.error("Login error:", err);
       alert("Google sign-in failed. Please try again.");
     }
   };
@@ -47,7 +55,7 @@ export default function LoginPage() {
         <h1 className="text-3xl font-bold mb-6 text-center">Login</h1>
 
         <p className="text-sm text-muted-foreground text-center mb-8">
-          Sign in with your Google account to continue.
+          Sign in with your Google account to access River Valley Report.
         </p>
 
         <Button
