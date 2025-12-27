@@ -6,16 +6,24 @@ import path from 'path';
 
 export default async function handler(req, res) {
   try {
+    console.log('[API river-outline] Request received');
+    
     // First, check if we have pre-downloaded USGS data
     const localDataPath = path.join(process.cwd(), 'public', 'geo', 'ohio-river.json');
+    console.log('[API river-outline] Checking path:', localDataPath);
+    console.log('[API river-outline] File exists:', fs.existsSync(localDataPath));
+    
     if (fs.existsSync(localDataPath)) {
+      console.log('[API river-outline] Reading local file');
       const localData = JSON.parse(fs.readFileSync(localDataPath, 'utf8'));
+      console.log('[API river-outline] Local data loaded successfully');
 
       // Handle both old format (single coordinates array) and new format (multiple polylines)
       let elements = [];
       
       if (localData.polylines && Array.isArray(localData.polylines)) {
         // New format: multiple polylines
+        console.log('[API river-outline] Using polylines format, count:', localData.polylines.length);
 
         elements = localData.polylines.map(line => ({
           type: 'way',
@@ -27,6 +35,7 @@ export default async function handler(req, res) {
         }));
       } else if (localData.coordinates && Array.isArray(localData.coordinates)) {
         // Old format: single coordinates array
+        console.log('[API river-outline] Using coordinates format, count:', localData.coordinates.length);
 
         elements = [{
           type: 'way',
@@ -38,6 +47,7 @@ export default async function handler(req, res) {
         }];
       }
       
+      console.log('[API river-outline] Returning', elements.length, 'elements');
       return res.status(200).json({
         success: true,
         source: localData.source || 'USGS NHD (cached)',
@@ -104,9 +114,12 @@ export default async function handler(req, res) {
     throw new Error('No valid geometry data found in USGS response');
 
   } catch (error) {
+    console.error('[API river-outline] Error:', error);
+    console.error('[API river-outline] Error stack:', error.stack);
 
     // Try alternative: OpenStreetMap waterway data (better than nothing)
     try {
+      console.log('[API river-outline] Trying OSM fallback');
       const overpassUrl = 'https://overpass-api.de/api/interpreter';
       const query = `
         [out:json][timeout:30];
