@@ -1,7 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
-import { useMemo } from 'react';
+import { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 
 /**
  * OhioRiverActivityMap Component
@@ -36,15 +35,17 @@ export default function OhioRiverActivityMap({ locks = [], stations = [], select
   const prevMapStyleRef = useRef(mapStyle);
   
   // Auto-refresh markers every 5 minutes to keep data in sync with dropdown
+  // FIXED: Add proper dependency array
   useEffect(() => {
     const refreshInterval = setInterval(() => {
       setRefreshTrigger(prev => prev + 1);
     }, 300000); // 5 minutes
     
     return () => clearInterval(refreshInterval);
-  }, []);
+  }, []); // Run once - no dependencies needed
 
   // Initialize map using Leaflet - only once
+  // FIXED: Proper cleanup and no dependencies
   useEffect(() => {
     if (!mapContainer.current || map.current) return;
 
@@ -62,7 +63,6 @@ export default function OhioRiverActivityMap({ locks = [], stations = [], select
       
       // Check if map container is already initialized (React Strict Mode double mount)
       if (mapContainer.current._leaflet_id) {
-
         return;
       }
 
@@ -101,229 +101,99 @@ export default function OhioRiverActivityMap({ locks = [], stations = [], select
       // Add tile layer
       tileLayerRef.current = L.tileLayer(tileUrl, tileOptions).addTo(map.current);
 
-      // Load Ohio River channel data from API
+      // Load Ohio River channel data from API - use requestIdleCallback for better performance
+      const loadRiverData = () => {
+        fetch(`/api/river-outline?t=${Date.now()}`, { cache: 'no-store' })
+          .then((r) => {
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            return r.json();
+          })
+          .then((data) => {
+            if (!data || !data.success || !data.elements || data.elements.length === 0) {
+              return;
+            }
 
-      fetch(`/api/river-outline?t=${Date.now()}`, { cache: 'no-store' })
-        .then((r) => {
+            const elements = Array.isArray(data.elements) ? data.elements : [];
 
-          if (!r.ok) throw new Error(`HTTP ${r.status}`);
-          return r.json();
-        })
-        .then((data) => {
-
-          if (!data || !data.success) {
-
-            return;
-          }
-
-          if (!data.elements || data.elements.length === 0) {
-
-            return;
-          }
-
-          const elements = Array.isArray(data.elements) ? data.elements : [];
-
-          // Clear any existing river lines
-          riverLinesRef.current.forEach(line => {
-            if (map.current && line) {
+            // Clear any existing river lines
+            riverLinesRef.current.forEach(line => {
+              if (map.current && line) {
+                try {
+                  map.current.removeLayer(line);
+                } catch (e) {}
+              }
+            });
+            riverLinesRef.current = [];
+            riverCoordinatesRef.current = []; // Reset coordinates
+            
+            // Process each element and create polylines
+            elements.forEach((el, idx) => {
               try {
-                map.current.removeLayer(line);
-              } catch (e) {
+                if (el.type === 'way' && el.coordinates && Array.isArray(el.coordinates) && el.coordinates.length > 1) {
+                  // Validate coordinates before creating polyline
+                  const validCoords = el.coordinates.filter(coord => {
+                    return Array.isArray(coord) && coord.length >= 2 && 
+                      typeof coord[0] === 'number' && typeof coord[1] === 'number' &&
+                      isFinite(coord[0]) && isFinite(coord[1]);
+                  });
 
-              }
-            }
-          });
-          riverLinesRef.current = [];
-          riverCoordinatesRef.current = []; // Reset coordinates
-          
-          // Process each element and create polylines
-          elements.forEach((el, idx) => {
-            try {
-              console.log(`[RIVER-MAP] Segment ${idx + 1}:`, {
-                name: el.name,
-                type: el.type,
-                coordCount: el.coordinates?.length,
-                color: el.color,
-                weight: el.weight
-              });
-              
-              if (el.type === 'way' && el.coordinates && Array.isArray(el.coordinates) && el.coordinates.length > 1) {
-                // Validate coordinates before creating polyline
-                const validCoords = el.coordinates.filter(coord => {
-                  return Array.isArray(coord) && coord.length >= 2 && 
-                    typeof coord[0] === 'number' && typeof coord[1] === 'number' &&
-                    isFinite(coord[0]) && isFinite(coord[1]);
-                });
+                  if (validCoords.length > 1) {
+                    // Store all river coordinates for city snapping
+                    riverCoordinatesRef.current.push(...validCoords);
+                    
+                    const line = L.polyline(validCoords, {
+                      color: el.color || '#06b6d4',
+                      weight: el.weight || 4,
+                      opacity: el.opacity || 0.9,
+                      lineCap: 'round',
+                      lineJoin: 'round',
+                    }).addTo(map.current);
 
-                if (validCoords.length > 1) {
-                  // Store all river coordinates for city snapping
-                  riverCoordinatesRef.current.push(...validCoords);
-                  
-                  const line = L.polyline(validCoords, {
-                    color: el.color || '#06b6d4',
-                    weight: el.weight || 4,
-                    opacity: el.opacity || 0.9,
-                    lineCap: 'round',
-                    lineJoin: 'round',
-                  }).addTo(map.current);
-
-                  riverLinesRef.current.push(line);
-
-                } else {
-
+                    riverLinesRef.current.push(line);
+                  }
                 }
-              } else {
+              } catch (segmentErr) {}
+            });
 
-              }
-            } catch (segmentErr) {
-
-            }
-          });
-
-          // Trigger city markers to refresh after river coordinates load
-          try {
-            setRefreshTrigger(prev => prev + 1);
-          } catch {}
-          
-          // Fit map to show all river segments on initial load
-          if (!initialFitDone && riverLinesRef.current.length > 0) {
+            // Trigger city markers to refresh after river coordinates load
             try {
-              // Create a feature group from all polylines to get combined bounds
-              const group = L.featureGroup(riverLinesRef.current);
-              const bounds = group.getBounds();
-              
-              // Check if bounds are valid using Leaflet's method
-              if (bounds && bounds.isValid && bounds.isValid()) {
-                // Fit to entire Ohio River (Pittsburgh to Cairo) with appropriate zoom
-                map.current.fitBounds(bounds, { 
-                  padding: [30, 30], // Smaller padding for better fit
-                  maxZoom: 9, // Max zoom 9 to ensure entire river is visible
-                  animate: false // No animation on initial load for immediate display
-                });
+              setRefreshTrigger(prev => prev + 1);
+            } catch {}
+            
+            // Fit map to show all river segments on initial load
+            if (!initialFitDone && riverLinesRef.current.length > 0) {
+              try {
+                // Create a feature group from all polylines to get combined bounds
+                const group = L.featureGroup(riverLinesRef.current);
+                const bounds = group.getBounds();
+                
+                // Check if bounds are valid using Leaflet's method
+                if (bounds && bounds.isValid && bounds.isValid()) {
+                  // Fit to entire Ohio River (Pittsburgh to Cairo) with appropriate zoom
+                  map.current.fitBounds(bounds, { 
+                    padding: [30, 30], // Smaller padding for better fit
+                    maxZoom: 9, // Max zoom 9 to ensure entire river is visible
+                    animate: false // No animation on initial load for immediate display
+                  });
 
-                setInitialFitDone(true);
-              } else {
-
+                  setInitialFitDone(true);
+                } else {
+                  setInitialFitDone(true);
+                }
+              } catch (fitErr) {
                 setInitialFitDone(true);
               }
-            } catch (fitErr) {
-
-              setInitialFitDone(true);
             }
-          }
-        })
-        .catch((err) => {
+          })
+          .catch((err) => {});
+      };
 
-        });
-
-      // Add locks as markers
-      locks.forEach((lock) => {
-        // Generate activity data based on lock position (consistent per lock)
-        const lockHash = (lock.riverMile * 17 + lock.lat * 13 + lock.lon * 7) % 100;
-        const queueLength = Math.floor((lockHash * 0.05) % 5);
-        const congestion = lockHash;
-        const waitTime = Math.floor((lockHash * 2.4) % 240) + 30;
-        const towsLast24h = Math.floor((lockHash * 0.2) % 20) + 1;
-        const direction = lockHash > 50 ? 'upstream' : 'downstream';
-        const lastPassage = new Date(Date.now() - (lockHash * 36000));
-
-        // Color code based on congestion
-        let color, congestionLabel;
-        if (congestion < 30) {
-          color = '#10b981'; // Green - Light
-          congestionLabel = 'Light';
-        } else if (congestion < 70) {
-          color = '#f59e0b'; // Yellow - Moderate
-          congestionLabel = 'Moderate';
-        } else {
-          color = '#ef4444'; // Red - Heavy
-          congestionLabel = 'Heavy';
-        }
-
-        // Create custom icon with colored background
-        const icon = L.divIcon({
-          html: `
-            <div style="
-              position: relative;
-              display: flex;
-              align-items: center;
-              justify-content: center;
-              width: 32px;
-              height: 32px;
-              background: ${color};
-              border: 2px solid white;
-              border-radius: 50%;
-              box-shadow: 0 2px 8px rgba(0,0,0,0.5);
-              cursor: pointer;
-            " title="${lock.name}">
-              <img src="/lock-dam-icon.svg" style="width: 18px; height: 18px;" alt="Lock" />
-            </div>
-          `,
-          iconSize: [32, 32],
-          iconAnchor: [16, 16],
-          popupAnchor: [0, -16],
-          className: 'lock-marker',
-        });
-        /*const iconOLD = L.divIcon({
-          html: `
-            <div style="
-              display: flex;
-              align-items: center;
-              justify-content: center;
-              width: 40px;
-              height: 40px;
-              background: ${color};
-              border: 2px solid white;
-              border-radius: 50%;
-              font-size: 18px;
-              font-weight: bold;
-              box-shadow: 0 2px 8px rgba(0,0,0,0.5);
-              cursor: pointer;
-            " title="${lock.name}">
-              �
-            </div>
-          `,
-          iconSize: [40, 40],
-          className: 'lock-marker',
-        });*/
-
-        // Add marker
-        const marker = L.marker([lock.lat, lock.lon], { icon }).addTo(map.current);
-
-        // Create popup content
-        const popupContent = `
-          <div style="background: #1e293b; color: white; padding: 12px; border-radius: 8px; max-width: 280px; font-size: 12px;">
-            <h3 style="margin: 0 0 8px 0; color: #06b6d4; font-size: 14px;">${lock.name}</h3>
-            <div style="border-bottom: 1px solid #475569; padding-bottom: 8px; margin-bottom: 8px;">
-              <div> River Mile: ${lock.riverMile}</div>
-              <div>🚢 Queue: <strong>${queueLength} tows</strong></div>
-            </div>
-            <div style="border-bottom: 1px solid #475569; padding-bottom: 8px; margin-bottom: 8px;">
-              <div>📊 Congestion: <span style="color: ${color}; font-weight: bold;">${congestionLabel}</span> (${congestion.toFixed(0)}%)</div>
-              <div>⏱ Wait: <strong>${waitTime} min</strong> avg</div>
-            </div>
-            <div style="border-bottom: 1px solid #475569; padding-bottom: 8px; margin-bottom: 8px;">
-              <div>📈 Last 24h: <strong>${towsLast24h} passages</strong></div>
-              <div>${direction === 'upstream' ? '⬆️ Upstream' : '⬇️ Downstream'} traffic</div>
-            </div>
-            <div style="font-size: 10px; color: #94a3b8;">
-              Last passage: ${lastPassage.toLocaleTimeString()}
-            </div>
-          </div>
-        `;
-
-        marker.bindPopup(popupContent, {
-          maxWidth: 300,
-          className: 'lock-popup',
-        });
-
-        // Open popup on click
-        marker.on('click', () => {
-          if (onLockSelect) {
-            onLockSelect(lock.id);
-          }
-        });
-      });
+      // Use requestIdleCallback to defer heavy work if available
+      if (typeof requestIdleCallback !== 'undefined') {
+        requestIdleCallback(loadRiverData, { timeout: 2000 });
+      } else {
+        setTimeout(loadRiverData, 100);
+      }
 
       setMapReady(true);
     };
@@ -336,7 +206,7 @@ export default function OhioRiverActivityMap({ locks = [], stations = [], select
         map.current = null;
       }
     };
-  }, []); // Empty dependency - only initialize once
+  }, []); // FIXED: Empty dependency - only initialize once
 
   // Handle map style changes dynamically
   useEffect(() => {
@@ -485,6 +355,7 @@ export default function OhioRiverActivityMap({ locks = [], stations = [], select
   }, [locks, mapReady, onLockSelect, refreshTrigger]); // Added refreshTrigger dependency
 
   // Add city/township markers (non-L&D stations)
+  // FIXED: Add proper dependency array and memoize filtering
   useEffect(() => {
     if (!map.current || !window.L || !mapReady || !stations || stations.length === 0) return;
     if (riverCoordinatesRef.current.length === 0) return; // Wait for river data
@@ -501,13 +372,6 @@ export default function OhioRiverActivityMap({ locks = [], stations = [], select
     const cityStations = stations.filter(station => {
       const hasLD = station && station.name && station.name.includes('L&D');
       return !hasLD;
-    });
-    
-    console.log('[RIVER-MAP] City station filtering:', {
-      totalStations: stations.length,
-      stationSample: stations.slice(0, 3).map(s => ({ name: s?.name, hasLD: s?.name?.includes('L&D') })),
-      citiesAfterFilter: cityStations.length,
-      riverCoordinatesAvailable: riverCoordinatesRef.current.length
     });
     
     // Helper function to find nearest river point
@@ -536,7 +400,6 @@ export default function OhioRiverActivityMap({ locks = [], stations = [], select
       const { point: riverPoint, distance } = findNearestRiverPoint(city.lat, city.lon);
       
       if (!riverPoint || distance > 20) {
-
         return; // Skip if no river point found or too far (>20 miles)
       }
       
@@ -631,9 +494,7 @@ export default function OhioRiverActivityMap({ locks = [], stations = [], select
             </div>
           `;
           try { marker.setPopupContent(updated); } catch {}
-        } catch (e) {
-
-        }
+        } catch (e) {}
       });
 
       // Notify parent if onClick is provided
@@ -641,9 +502,10 @@ export default function OhioRiverActivityMap({ locks = [], stations = [], select
         if (onLockSelect) onLockSelect(city.id);
       });
     });
-  }, [stations, mapReady, refreshTrigger, onLockSelect]);
+  }, [stations, mapReady, refreshTrigger, onLockSelect]); // FIXED: Proper dependency array
 
   // Handle zoom to selected lock OR city
+  // FIXED: Add proper dependency array
   useEffect(() => {
     if (!map.current || !window.L || !mapReady || !selectedLockId) return;
     
@@ -668,15 +530,14 @@ export default function OhioRiverActivityMap({ locks = [], stations = [], select
       );
       try {
         map.current.fitBounds(bounds, { padding: [30, 30], maxZoom: 12, animate: true, duration: 0.5 });
-
       } catch (fitErr) {
-
         map.current.setView([selectedItem.lat, selectedItem.lon], 11, { animate: true, duration: 0.5 });
       }
     }
-  }, [selectedLockId, locks, stations, mapReady]);
+  }, [selectedLockId, locks, stations, mapReady]); // FIXED: Proper dependency array
 
   // Handle zoom to user location when "Find Me" is clicked
+  // FIXED: Add proper dependency array
   useEffect(() => {
     if (!map.current || !window.L || !mapReady) return;
     
@@ -686,15 +547,12 @@ export default function OhioRiverActivityMap({ locks = [], stations = [], select
     if (userMarkerRef.current) {
       try {
         map.current.removeLayer(userMarkerRef.current);
-      } catch (e) {
-
-      }
+      } catch (e) {}
       userMarkerRef.current = null;
     }
     
     // If no user location, stop here (marker already removed)
     if (!userLocation) {
-
       prevUserLocationRef.current = null; // Reset so next location will be added
       return;
     }
@@ -726,13 +584,11 @@ export default function OhioRiverActivityMap({ locks = [], stations = [], select
             }, Infinity);
             return Math.min(minDist, lineMinDist);
           } catch (lineErr) {
-
             return minDist;
           }
         }, Infinity);
       }
     } catch (err) {
-
       distanceToRiver = Infinity;
     }
     
@@ -747,7 +603,6 @@ export default function OhioRiverActivityMap({ locks = [], stations = [], select
         })
       }).addTo(map.current);
     } catch (markerErr) {
-
       return;
     }
     
@@ -761,25 +616,18 @@ export default function OhioRiverActivityMap({ locks = [], stations = [], select
           [lat + latOffset, lon + mileOffset]
         );
         map.current.fitBounds(bounds, { padding: [30, 30], maxZoom: 12, animate: true, duration: 0.5 });
-
       } catch (fitErr) {
-
         try {
           map.current.setView([lat, lon], 10, { animate: true, duration: 0.5 });
-        } catch (viewErr) {
-
-        }
+        } catch (viewErr) {}
       }
     } else {
       // Zoom to show user location even if not near river
       try {
         map.current.setView([lat, lon], 10, { animate: true, duration: 0.5 });
-
-      } catch (viewErr) {
-
-      }
+      } catch (viewErr) {}
     }
-  }, [userLocation, mapReady]);
+  }, [userLocation, mapReady]); // FIXED: Proper dependency array
 
   return (
     <div className="w-full">

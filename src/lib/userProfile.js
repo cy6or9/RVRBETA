@@ -309,6 +309,7 @@ export async function removePreferredStation(userId, stationId) {
 
 /**
  * Update last login timestamp and create profile if missing
+ * FIXED: Uses setDoc with merge to avoid offline errors
  * @param {string} userId - Firebase user UID
  * @param {string} email - User email
  */
@@ -317,33 +318,21 @@ export async function setLastLogin(userId, email) {
 
   try {
     const userRef = doc(db, "userProfiles", userId);
-    const docSnap = await getDoc(userRef);
-
-    if (docSnap.exists()) {
-      // Update existing profile
-      await updateDoc(userRef, {
-        "stats.lastLoginAt": serverTimestamp(),
-        email,
-        updatedAt: serverTimestamp(),
-      });
-    } else {
-      // Create new profile with login info and Basic tier
-      await setDoc(userRef, {
-        ...defaultUserProfile,
-        uid: userId,
-        email,
-        stats: {
-          lastLoginAt: serverTimestamp(),
-          lastLogoutAt: null,
-          totalOnlineSeconds: 0,
-        },
-        privileges: {
-          tier: "Basic",
-        },
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-    }
+    
+    // Use setDoc with merge: true to safely create or update
+    // This avoids the "Failed to get document because client is offline" error
+    await setDoc(userRef, {
+      uid: userId,
+      email,
+      stats: {
+        lastLoginAt: serverTimestamp(),
+      },
+      privileges: {
+        tier: "Basic", // Always ensure Basic tier for new users
+      },
+      updatedAt: serverTimestamp(),
+    }, { merge: true });
+    
   } catch (error) {
     console.error("Error setting last login:", error);
   }
@@ -351,6 +340,7 @@ export async function setLastLogin(userId, email) {
 
 /**
  * Update last logout timestamp
+ * FIXED: Uses setDoc with merge to avoid updateDoc on non-existent docs
  * @param {string} userId - Firebase user UID
  */
 export async function setLastLogout(userId) {
@@ -358,10 +348,13 @@ export async function setLastLogout(userId) {
 
   try {
     const userRef = doc(db, "userProfiles", userId);
-    await updateDoc(userRef, {
-      "stats.lastLogoutAt": serverTimestamp(),
+    // Use setDoc with merge to safely update without checking existence
+    await setDoc(userRef, {
+      stats: {
+        lastLogoutAt: serverTimestamp(),
+      },
       updatedAt: serverTimestamp(),
-    });
+    }, { merge: true });
   } catch (error) {
     console.error("Error setting last logout:", error);
   }
@@ -369,6 +362,7 @@ export async function setLastLogout(userId) {
 
 /**
  * Save session duration (called once on logout/tab close)
+ * FIXED: Uses setDoc with merge to avoid updateDoc on non-existent docs
  * @param {string} userId - Firebase user UID
  * @param {number} elapsedSeconds - Number of seconds to add
  */
@@ -378,10 +372,13 @@ export async function saveSessionDuration(userId, elapsedSeconds) {
 
   try {
     const userRef = doc(db, "userProfiles", userId);
-    await updateDoc(userRef, {
-      "stats.totalOnlineSeconds": increment(elapsedSeconds),
+    // Use setDoc with merge to safely update
+    await setDoc(userRef, {
+      stats: {
+        totalOnlineSeconds: increment(elapsedSeconds),
+      },
       updatedAt: serverTimestamp(),
-    });
+    }, { merge: true });
   } catch (error) {
     console.error("Error saving session duration:", error);
   }

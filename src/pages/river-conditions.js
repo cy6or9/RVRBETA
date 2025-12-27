@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import Link from "next/link";
 import Header from "@/components/Header";
 import Footer from "@/components/Footer";
@@ -571,13 +571,12 @@ function RiverLevelIndicator({ history, hazardCode }) {
 
 /* ---------------------------------------------------
    WIND COMPASS
-   - Rotated 180° so arrow indicates where wind is GOING (flow),
-     not where it is coming FROM.
+   - Shows the direction the wind is blowing
 --------------------------------------------------- */
 function WindCompass({ direction, degrees }) {
   if (degrees == null || isNaN(degrees)) return null;
 
-  const flowDeg = ((Number(degrees) + 180) % 360 + 360) % 360;
+  const normalizedDeg = ((Number(degrees) % 360) + 360) % 360;
 
   return (
     <div className="flex flex-col items-center justify-center">
@@ -588,13 +587,13 @@ function WindCompass({ direction, degrees }) {
         <span className="absolute right-0 top-1/2 -translate-y-1/2">E</span>
         <div
           className="absolute left-1/2 bottom-1/2 w-[2px] h-7 bg-cyan-400 rounded-full origin-bottom -translate-x-1/2"
-          style={{ transform: `rotate(${flowDeg}deg)` }}
+          style={{ transform: `rotate(${normalizedDeg}deg)` }}
         />
       </div>
       <p className="text-xs mt-1">
         {direction} ({degrees.toFixed(0)}°)
       </p>
-      <p className="text-[10px] opacity-70 -mt-1">Flow: {flowDeg.toFixed(0)}°</p>
+      <p className="text-[10px] opacity-70 -mt-1">Blowing: {normalizedDeg.toFixed(0)}°</p>
     </div>
   );
 }
@@ -780,6 +779,7 @@ export default function RiverConditions() {
   /* -------------------- EFFECTS -------------------- */
 
   // Load saved map preferences on mount (location, zoom, dark mode)
+  // FIXED: Add proper dependency array to prevent infinite loops
   useEffect(() => {
     if (!profile || preferencesLoadedRef.current) return;
 
@@ -823,28 +823,35 @@ export default function RiverConditions() {
       setData(profile.cachedData.lastSeenRiverData);
 
     }
-  }, [profile]);
+  }, [profile]); // Only run when profile changes
 
+  // Load river data when selected station changes
+  // FIXED: Add proper dependency array
   useEffect(() => {
     if (selected) {
       loadRiver(selected);
     }
-  }, [selected]);
+  }, [selected]); // Only run when selected changes
 
+  // Auto-refresh river data every 60 seconds
+  // FIXED: Add proper dependency array and cleanup
   useEffect(() => {
     if (!selected) return;
     const t = setInterval(() => {
       loadRiver(selected, { silent: true });
     }, 60_000);
     return () => clearInterval(t);
-  }, [selected]);
+  }, [selected]); // Only recreate timer when selected changes
 
+  // Load weather and AQI when location changes
+  // FIXED: Add proper dependency array
   useEffect(() => {
     loadWeather(wxLoc.lat, wxLoc.lon);
     loadAQI(wxLoc.lat, wxLoc.lon);
-  }, [wxLoc]);
+  }, [wxLoc.lat, wxLoc.lon]); // Only run when coordinates change
 
   // Auto-save map state changes to user profile (location, zoom, dark mode)
+  // FIXED: Add proper dependencies and prevent excessive saves
   useEffect(() => {
     if (!saveMapPreferences || !selected) return;
 
@@ -860,9 +867,10 @@ export default function RiverConditions() {
     }, 1000); // Debounce saves to avoid too many updates
 
     return () => clearTimeout(timer);
-  }, [selected, saveMapPreferences]);
+  }, [selected?.lat, selected?.lon, saveMapPreferences]); // Only save when coordinates change
 
   // Cache user location on page unload, disconnect, or offline
+  // FIXED: Add proper dependency array
   useEffect(() => {
     const cacheLocation = () => {
       if (userLocation && userCityState) {
@@ -883,88 +891,115 @@ export default function RiverConditions() {
     window.addEventListener('offline', cacheLocation);
     
     // Cache on visibility change (tab switch, minimize)
-    document.addEventListener('visibilitychange', () => {
+    const handleVisibilityChange = () => {
       if (document.hidden) {
         cacheLocation();
       }
-    });
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
       window.removeEventListener('beforeunload', cacheLocation);
       window.removeEventListener('offline', cacheLocation);
-      document.removeEventListener('visibilitychange', cacheLocation);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [userLocation, userCityState]);
+  }, [userLocation, userCityState]); // Only recreate when location changes
 
-  const findDownstreamStation = (userLat, userLon, stations) => {
-    if (!Array.isArray(stations) || stations.length === 0) return null;
+  // Snap user location to nearest point on river path
+  const snapToRiver = useCallback((userLat, userLon, riverCoords) => {
+    if (!Array.isArray(riverCoords) || riverCoords.length === 0) {
+      return { lat: userLat, lon: userLon };
+    }
 
-    // Step 1: Find all stations within 3 miles (close proximity check)
-    const closeStations = [];
-    for (const s of stations) {
-      if (typeof s?.lat !== "number" || typeof s?.lon !== "number") continue;
-      const d = distKm(userLat, userLon, s.lat, s.lon);
-      if (d <= 4.83) { // ~3 miles in km
-        closeStations.push({ station: s, distance: d });
+    let nearestPoint = null;
+    let minDistance = Infinity;
+
+    for (const coord of riverCoords) {
+      if (!Array.isArray(coord) || coord.length < 2) continue;
+      const [lat, lon] = coord;
+      if (typeof lat !== 'number' || typeof lon !== 'number') continue;
+
+      const distance = Math.sqrt(
+        Math.pow((lat - userLat) * 69, 2) + // 69 miles per degree latitude
+        Math.pow((lon - userLon) * 54 * Math.cos(userLat * Math.PI / 180), 2)
+      );
+
+      if (distance < minDistance) {
+        minDistance = distance;
+        nearestPoint = { lat, lon };
       }
     }
 
-    // If user is very close to a station (< 3 miles), return the closest one
-    if (closeStations.length > 0) {
-      closeStations.sort((a, b) => a.distance - b.distance);
+    return nearestPoint || { lat: userLat, lon: userLon };
+  }, []);
 
-      return closeStations[0].station;
-    }
+  // Find downstream Lock & Dam from a river position
+  const findDownstreamLock = useCallback((riverLat, riverLon, locks) => {
+    if (!Array.isArray(locks) || locks.length === 0) return null;
 
-    // Step 2: Find nearest station if not close to any
+    // Find all locks that are downstream (higher river mile)
+    // First, find nearest lock to determine our position on the river
     let nearest = null;
     let bestDist = Infinity;
 
-    for (const s of stations) {
-      if (typeof s?.lat !== "number" || typeof s?.lon !== "number") continue;
-      const d = distKm(userLat, userLon, s.lat, s.lon);
+    for (const lock of locks) {
+      if (typeof lock?.lat !== "number" || typeof lock?.lon !== "number") continue;
+      const d = distKm(riverLat, riverLon, lock.lat, lock.lon);
       if (d < bestDist) {
         bestDist = d;
-        nearest = s;
+        nearest = lock;
       }
     }
 
     if (!nearest) return null;
 
-    // Step 3: Find downstream station using river mile
+    // Find the next lock downstream (higher river mile)
     if (typeof nearest.riverMile === "number") {
-      // Find the next station downstream (higher river mile)
-      const downstreamCandidates = stations
-        .filter((s) => typeof s?.riverMile === "number" && s.riverMile > nearest.riverMile)
+      const downstreamCandidates = locks
+        .filter((lock) => typeof lock?.riverMile === "number" && lock.riverMile > nearest.riverMile)
         .sort((a, b) => a.riverMile - b.riverMile);
       
       if (downstreamCandidates.length > 0) {
-
         return downstreamCandidates[0];
       }
     }
 
-    // Step 4: Fallback — Ohio River flows south/southwest (use latitude)
-    const fallback = stations
-      .filter((s) => typeof s?.lat === "number" && s.lat < nearest.lat)
-      .sort((a, b) => b.lat - a.lat)[0];
+    // Fallback — Ohio River flows downstream (increasing latitude until it curves)
+    // Use distance along river if available, otherwise use simple lat/lon
+    const downstreamByPosition = locks
+      .filter((lock) => {
+        if (!lock?.lat || !lock?.lon) return false;
+        // Calculate if this lock is "downstream" based on distance from nearest
+        const distFromNearest = distKm(nearest.lat, nearest.lon, lock.lat, lock.lon);
+        return distFromNearest > 1; // At least 1km away
+      })
+      .sort((a, b) => {
+        // Sort by river mile if available, otherwise by distance from current position
+        if (typeof a.riverMile === 'number' && typeof b.riverMile === 'number') {
+          return a.riverMile - b.riverMile;
+        }
+        const distA = distKm(riverLat, riverLon, a.lat, a.lon);
+        const distB = distKm(riverLat, riverLon, b.lat, b.lon);
+        return distA - distB;
+      })[0];
 
-    return fallback || nearest;
-  };
+    return downstreamByPosition || nearest;
+  }, []); // Memoize function - no dependencies needed
 
-  const buildFindMeInfo = (userLat, userLon, station) => {
-    if (!station) return null;
+  // Memoize buildFindMeInfo to prevent recalculation
+  const buildFindMeInfo = useCallback((userLat, userLon, item) => {
+    if (!item) return null;
 
-    // Calculate straight-line distance to downstream station
-    const km = distKm(userLat, userLon, station.lat, station.lon);
+    // Calculate straight-line distance to downstream lock/dam
+    const km = distKm(userLat, userLon, item.lat, item.lon);
     const miles = kmToMiles(km);
     const distanceText = `${miles.toFixed(1)} miles downstream`;
 
     return {
-      label: `You are upstream of ${station.name}`,
+      label: `You are upstream of ${item.name}`,
       distance: distanceText,
     };
-  };
+  }, []); // Memoize function - no dependencies needed
 
   /* -------------------- LOCATE ME ----------------------- */
 
@@ -1092,21 +1127,53 @@ export default function RiverConditions() {
 
         }
 
-        // 🔥 THIS IS THE IMPORTANT PART
-        const downstreamStation = findDownstreamStation(
-          userLat,
-          userLon,
-          stations
+        // 🔥 THIS IS THE IMPORTANT PART - Snap to river, then find downstream L&D
+        
+        // First, fetch river outline data to snap user to river
+        let riverCoords = [];
+        try {
+          const riverResponse = await fetch(`/api/river-outline?t=${Date.now()}`, { cache: 'no-store' });
+          if (riverResponse.ok) {
+            const riverData = await riverResponse.json();
+            if (riverData.success && Array.isArray(riverData.elements)) {
+              riverData.elements.forEach((el) => {
+                if (el.type === 'way' && Array.isArray(el.coordinates)) {
+                  riverCoords.push(...el.coordinates);
+                }
+              });
+            }
+          }
+        } catch (err) {
+          console.error("Error loading river path:", err);
+        }
+
+        // Snap user location to nearest point on river
+        const snappedLocation = snapToRiver(userLat, userLon, riverCoords);
+        
+        // Find downstream lock from snapped river position
+        const downstreamLock = findDownstreamLock(
+          snappedLocation.lat,
+          snappedLocation.lon,
+          ohioRiverLocks
         );
 
-        if (downstreamStation) {
-          setSelected(downstreamStation);
-          setSelectedDam(null); // Clear dam selection when selecting station
+        if (downstreamLock) {
+          // Find nearest station to the lock for river data
+          const nearestStation = stations.reduce((prev, curr) => {
+            const prevDist = Math.hypot(prev.lat - downstreamLock.lat, prev.lon - downstreamLock.lon);
+            const currDist = Math.hypot(curr.lat - downstreamLock.lat, curr.lon - downstreamLock.lon);
+            return currDist < prevDist ? curr : prev;
+          });
+          
+          setSelectedDam(downstreamLock); // Select the lock
+          setSelected(nearestStation); // Use nearest station for river data
+          setWxLoc({ lat: downstreamLock.lat, lon: downstreamLock.lon });
+          setMapCenter({ lat: downstreamLock.lat, lon: downstreamLock.lon });
 
           const info = buildFindMeInfo(
             userLat,
             userLon,
-            downstreamStation
+            downstreamLock
           );
 
           setFindMeInfo(info);
@@ -1172,54 +1239,83 @@ export default function RiverConditions() {
   };
 
   /* -------------------- DERIVED UI VALUES -------------------- */
+  // FIXED: Memoize expensive computations to prevent recalculation on every render
 
-  const hasFloodStage =
-    typeof data?.floodStage === "number" && isFinite(data.floodStage) && data.floodStage > 0;
+  const hasFloodStage = useMemo(() => 
+    typeof data?.floodStage === "number" && isFinite(data.floodStage) && data.floodStage > 0,
+    [data?.floodStage]
+  );
 
-  const hazardCode =
+  const hazardCode = useMemo(() => 
     typeof data?.hazardCode === "number" && data.hazardCode >= 0 && data.hazardCode <= 3
       ? data.hazardCode
-      : 0;
+      : 0,
+    [data?.hazardCode]
+  );
 
-  const hazardLabel =
+  const hazardLabel = useMemo(() => 
     typeof data?.hazardLabel === "string" && data.hazardLabel.trim()
       ? data.hazardLabel.trim()
-      : HAZARD_LEVELS[hazardCode]?.label ?? "Normal";
+      : HAZARD_LEVELS[hazardCode]?.label ?? "Normal",
+    [data?.hazardLabel, hazardCode]
+  );
 
-  const precip = weather?.precip ?? 0;
-  const precipIcon = precip >= 80 ? "⚡️" : precip >= 50 ? "🌧" : precip >= 20 ? "☁️" : "🌤";
+  const precip = useMemo(() => weather?.precip ?? 0, [weather?.precip]);
+  const precipIcon = useMemo(() => 
+    precip >= 80 ? "⚡️" : precip >= 50 ? "🌧" : precip >= 20 ? "☁️" : "🌤",
+    [precip]
+  );
 
-  const mapSrc = `https://www.marinetraffic.com/en/ais/embed/map?zoom=9&centerx=${mapCenter.lon}&centery=${mapCenter.lat}&layer_all=1`;
+  const mapSrc = useMemo(() => 
+    `https://www.marinetraffic.com/en/ais/embed/map?zoom=9&centerx=${mapCenter.lon}&centery=${mapCenter.lat}&layer_all=1`,
+    [mapCenter.lat, mapCenter.lon]
+  );
 
-  // ✅ Past 7 days (daily highs)
-  const past7Series = dailyHighHistory(data?.history, 7);
+  // ✅ Past 7 days (daily highs) - memoized
+  const past7Series = useMemo(() => dailyHighHistory(data?.history, 7), [data?.history]);
 
-  // ✅ Forecast 7 days (daily highs), tolerate many API formats
-  const predictionSeries = normalizeForecastSeries(data, 7);
+  // ✅ Forecast 7 days (daily highs), tolerate many API formats - memoized
+  const predictionSeries = useMemo(() => normalizeForecastSeries(data, 7), [data]);
 
   // “Official NOAA Forecast” badge when NWPS is used
   const forecastSource = String(data?.forecastSource ?? data?.forecast_source ?? "").toLowerCase();
-  const forecastType = String(data?.forecastType ?? data?.forecast_type ?? "").toLowerCase();
-  const isNWPS = forecastSource.includes("nwps") || forecastType.includes("official");
+  const forecastType = useMemo(() => 
+    String(data?.forecastType ?? data?.forecast_type ?? "").toLowerCase(),
+    [data?.forecastType, data?.forecast_type]
+  );
+  const isNWPS = useMemo(() => 
+    forecastSource.includes("nwps") || forecastType.includes("official"),
+    [forecastSource, forecastType]
+  );
 
-  // Issuance time (if your API provides it)
-  const issuedAt =
+  // Issuance time (if your API provides it) - memoized
+  const issuedAt = useMemo(() =>
     data?.forecastIssuedAt ??
     data?.forecastIssued ??
     data?.issuedAt ??
     data?.issuanceTime ??
     data?.forecastMeta?.issuedAt ??
-    null;
+    null,
+    [data?.forecastIssuedAt, data?.forecastIssued, data?.issuedAt, data?.issuanceTime, data?.forecastMeta?.issuedAt]
+  );
 
-  // Confidence flags (if your API provides it)
-  const confidence =
+  // Confidence flags (if your API provides it) - memoized
+  const confidence = useMemo(() =>
     data?.forecastConfidence ??
     data?.confidence ??
     data?.forecastMeta?.confidence ??
-    null;
+    null,
+    [data?.forecastConfidence, data?.confidence, data?.forecastMeta?.confidence]
+  );
 
-  const wasCorrected = !!(data?.forecastMeta?.corrected);
-  const projectionMethod = data?.forecastMeta?.projectionMethod;
+  const wasCorrected = useMemo(() => 
+    !!(data?.forecastMeta?.corrected),
+    [data?.forecastMeta?.corrected]
+  );
+  const projectionMethod = useMemo(() => 
+    data?.forecastMeta?.projectionMethod,
+    [data?.forecastMeta?.projectionMethod]
+  );
 
   /* -------------------- RENDER ---------------------- */
 

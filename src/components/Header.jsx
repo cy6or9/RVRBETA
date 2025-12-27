@@ -5,7 +5,7 @@ import { useAuth } from "@/context/AuthContext";
 export default function Header() {
   const router = useRouter();
   const pathname = router.pathname;
-  const { isAdmin, loginWithGoogle, logout, loading } = useAuth();
+  const { user, isAdmin, loginWithGoogle, logout, loading } = useAuth();
 
   const navItems = [
     { name: "River Conditions", href: "/river-conditions" },
@@ -44,21 +44,23 @@ export default function Header() {
             );
           })}
 
-          {/* Login / Admin */}
+          {/* Login / Admin / Logout */}
           <div className="flex items-center gap-3 ml-4">
             {loading ? (
               <span className="text-xs text-muted-foreground">Checking login…</span>
-            ) : isAdmin ? (
+            ) : user ? (
               <>
-                <Link
-                  href="/admin"
-                  className="text-xs text-foreground/80 hover:text-[hsl(142,70%,35%)]"
-                >
-                  Admin
-                </Link>
+                {isAdmin && (
+                  <Link
+                    href="/admin"
+                    className="text-xs text-foreground/80 hover:text-[hsl(142,70%,35%)]"
+                  >
+                    Admin
+                  </Link>
+                )}
                 <button
                   onClick={logout}
-                  className="text-xs text-muted-foreground hover:text-destructive transition-colors"
+                  className="text-xs text-foreground/70 hover:text-[hsl(142,70%,35%)] transition-colors"
                 >
                   Logout
                 </button>
