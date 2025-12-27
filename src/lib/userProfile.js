@@ -9,6 +9,7 @@ import {
   setDoc,
   updateDoc,
   serverTimestamp,
+  increment,
 } from "firebase/firestore";
 import { app, firebaseEnabled } from "./firebase";
 
@@ -345,7 +346,8 @@ export async function updateLastLogin(userId, email) {
 }
 
 /**
- * Add online time to user's total
+ * Add online time to user's total using Firestore increment
+ * This function writes to Firestore - use sparingly (hourly or on offline)
  * @param {string} userId - Firebase user UID
  * @param {number} seconds - Number of seconds to add
  */
@@ -355,17 +357,131 @@ export async function addOnlineSeconds(userId, seconds) {
 
   try {
     const userRef = doc(db, "userProfiles", userId);
-    const docSnap = await getDoc(userRef);
-
-    if (docSnap.exists()) {
-      const currentSeconds = docSnap.data()?.stats?.totalOnlineSeconds || 0;
-      await updateDoc(userRef, {
-        "stats.totalOnlineSeconds": currentSeconds + seconds,
-        updatedAt: serverTimestamp(),
-      });
-    }
+    await updateDoc(userRef, {
+      "stats.totalOnlineSeconds": increment(seconds),
+      updatedAt: serverTimestamp(),
+    });
   } catch (error) {
     console.error("Error adding online seconds:", error);
+  }
+}
+
+// Session tracking state (client-side only, no Firestore until write)
+let sessionState = {
+  userId: null,
+  sessionStart: null,
+  hourlyTimer: null,
+  offlineHandlersAttached: false,
+};
+
+/**
+ * Start tracking a user session
+ * Sets up hourly writes and offline detection
+ * @param {string} userId - Firebase user UID
+ */
+export function startSessionTracking(userId) {
+  if (!firebaseEnabled || !userId) return;
+
+  // Stop any existing session first
+  stopSessionTracking();
+
+  // Initialize new session
+  sessionState.userId = userId;
+  sessionState.sessionStart = Date.now();
+
+  // Set up hourly timer to write accumulated time
+  sessionState.hourlyTimer = setInterval(() => {
+    const elapsed = Math.floor((Date.now() - sessionState.sessionStart) / 1000);
+    if (elapsed > 0) {
+      addOnlineSeconds(userId, elapsed);
+      sessionState.sessionStart = Date.now(); // Reset timer
+    }
+  }, 3600000); // 1 hour = 3600000ms
+
+  // Set up offline detection (only once)
+  if (!sessionState.offlineHandlersAttached) {
+    setupOfflineHandlers();
+    sessionState.offlineHandlersAttached = true;
+  }
+}
+
+/**
+ * Stop tracking and save accumulated time
+ */
+export function stopSessionTracking() {
+  if (!sessionState.userId || !sessionState.sessionStart) return;
+
+  // Calculate and save remaining time
+  const elapsed = Math.floor((Date.now() - sessionState.sessionStart) / 1000);
+  if (elapsed > 0) {
+    addOnlineSeconds(sessionState.userId, elapsed);
+  }
+
+  // Clear timer
+  if (sessionState.hourlyTimer) {
+    clearInterval(sessionState.hourlyTimer);
+    sessionState.hourlyTimer = null;
+  }
+
+  // Reset state
+  sessionState.userId = null;
+  sessionState.sessionStart = null;
+}
+
+/**
+ * Set up browser offline/visibility handlers
+ */
+function setupOfflineHandlers() {
+  // Save on visibility change (tab hidden/minimized)
+  const handleVisibilityChange = () => {
+    if (document.visibilityState === 'hidden' && sessionState.userId) {
+      const elapsed = Math.floor((Date.now() - sessionState.sessionStart) / 1000);
+      if (elapsed > 0) {
+        addOnlineSeconds(sessionState.userId, elapsed);
+        sessionState.sessionStart = Date.now();
+      }
+    }
+  };
+
+  // Save before page unload
+  const handleBeforeUnload = () => {
+    if (sessionState.userId && sessionState.sessionStart) {
+      const elapsed = Math.floor((Date.now() - sessionState.sessionStart) / 1000);
+      if (elapsed > 0) {
+        // Use sendBeacon for reliability on unload
+        const data = JSON.stringify({ userId: sessionState.userId, seconds: elapsed });
+        // Note: This would require a beacon endpoint, fallback to sync call
+        addOnlineSeconds(sessionState.userId, elapsed);
+      }
+    }
+  };
+
+  // Save on page hide (mobile Safari)
+  const handlePageHide = () => {
+    if (sessionState.userId && sessionState.sessionStart) {
+      const elapsed = Math.floor((Date.now() - sessionState.sessionStart) / 1000);
+      if (elapsed > 0) {
+        addOnlineSeconds(sessionState.userId, elapsed);
+      }
+    }
+  };
+
+  // Attach listeners
+  document.addEventListener('visibilitychange', handleVisibilityChange);
+  window.addEventListener('beforeunload', handleBeforeUnload);
+  window.addEventListener('pagehide', handlePageHide);
+
+  // Handle connection change if available
+  if (navigator.connection) {
+    navigator.connection.addEventListener('change', () => {
+      if (!navigator.onLine && sessionState.userId && sessionState.sessionStart) {
+        const elapsed = Math.floor((Date.now() - sessionState.sessionStart) / 1000);
+        if (elapsed > 0) {
+          addOnlineSeconds(sessionState.userId, elapsed);
+          sessionState.sessionStart = Date.now();
+        }
+      }
+    });
   }
 }
 

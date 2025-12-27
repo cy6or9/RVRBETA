@@ -2,7 +2,7 @@
 // Central authentication state + admin role check
 // Updated so the app runs locally even when Firebase env vars are missing.
 
-import { createContext, useContext, useEffect, useState, useRef } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 import {
   auth,
   loginWithGoogle as firebaseLogin,
@@ -10,7 +10,11 @@ import {
   firebaseEnabled,
 } from "@/lib/firebase";
 import { onAuthStateChanged } from "firebase/auth";
-import { updateLastLogin, addOnlineSeconds } from "@/lib/userProfile";
+import { 
+  updateLastLogin, 
+  startSessionTracking, 
+  stopSessionTracking 
+} from "@/lib/userProfile";
 
 const AuthContext = createContext(null);
 export const useAuth = () => useContext(AuthContext);
@@ -18,47 +22,21 @@ export const useAuth = () => useContext(AuthContext);
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
-  const sessionStartTime = useRef(null);
-  const sessionTimerInterval = useRef(null);
 
-  // Track online time
+  // Session tracking with new hourly-write system
   useEffect(() => {
     if (!user || !firebaseEnabled) {
-      // Clear session tracking when logged out
-      if (sessionTimerInterval.current) {
-        clearInterval(sessionTimerInterval.current);
-        sessionTimerInterval.current = null;
-      }
-      sessionStartTime.current = null;
+      // Stop tracking when logged out
+      stopSessionTracking();
       return;
     }
 
-    // Start session timer
-    sessionStartTime.current = Date.now();
-
-    // Save time every 60 seconds
-    sessionTimerInterval.current = setInterval(() => {
-      const now = Date.now();
-      const elapsed = Math.floor((now - sessionStartTime.current) / 1000);
-      if (elapsed > 0) {
-        addOnlineSeconds(user.uid, elapsed);
-        sessionStartTime.current = now;
-      }
-    }, 60000); // Every 60 seconds
+    // Start session tracking (writes hourly + on offline)
+    startSessionTracking(user.uid);
 
     // Cleanup on unmount or user change
     return () => {
-      if (sessionTimerInterval.current) {
-        clearInterval(sessionTimerInterval.current);
-      }
-      // Save remaining time
-      if (sessionStartTime.current) {
-        const now = Date.now();
-        const elapsed = Math.floor((now - sessionStartTime.current) / 1000);
-        if (elapsed > 0 && user?.uid) {
-          addOnlineSeconds(user.uid, elapsed);
-        }
-      }
+      stopSessionTracking();
     };
   }, [user]);
 
