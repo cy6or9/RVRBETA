@@ -6,6 +6,7 @@ import { AuthProvider } from "@/context/AuthContext";
 import { UserProfileProvider } from "@/context/UserProfileContext";
 import { useEffect } from "react";
 import { useUserProfile } from "@/context/UserProfileContext";
+import { useRouter } from "next/router";
 
 function ServiceWorkerRegistration() {
   const { profile } = useUserProfile();
@@ -25,11 +26,35 @@ function ServiceWorkerRegistration() {
   return null;
 }
 
+// Handle Firebase auth redirect on ANY page
+function AuthRedirectHandler() {
+  const router = useRouter();
+  
+  useEffect(() => {
+    // Check if this is a redirect from Google OAuth
+    const isAuthRedirect = 
+      window.location.search.includes('state=') || 
+      window.location.search.includes('code=') ||
+      window.location.hash.includes('access_token');
+    
+    if (isAuthRedirect && router.pathname !== '/login') {
+      console.log("[_app] Detected OAuth redirect on wrong page, redirecting to /login");
+      // Preserve the query params and redirect to login page
+      const fullUrl = window.location.href;
+      const url = new URL(fullUrl);
+      router.replace('/login' + url.search + url.hash);
+    }
+  }, [router]);
+  
+  return null;
+}
+
 export default function MyApp({ Component, pageProps }) {
   return (
     <AuthProvider>
       <UserProfileProvider>
         <QueryClientProvider client={queryClient}>
+          <AuthRedirectHandler />
           <ServiceWorkerRegistration />
           <Component {...pageProps} />
         </QueryClientProvider>
