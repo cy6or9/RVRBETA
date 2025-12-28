@@ -187,24 +187,29 @@ export function AuthProvider({ children }) {
     console.log("[AuthContext] Current path:", currentPath);
     console.log("[AuthContext] Redirect path after logout:", redirectPath);
     
-    // Save session before logout
+    // Save session before logout (non-blocking with timeout)
     if (sessionStartRef.current && user) {
       console.log("[AuthContext] Saving session before logout");
       const elapsedSeconds = Math.floor((Date.now() - sessionStartRef.current) / 1000);
       if (elapsedSeconds > 5) {
-        try {
-          await saveSessionDuration(user.uid, elapsedSeconds);
-          await setLastLogout(user.uid);
+        // Run in background with timeout - don't block logout
+        Promise.race([
+          Promise.all([
+            saveSessionDuration(user.uid, elapsedSeconds),
+            setLastLogout(user.uid)
+          ]),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 2000))
+        ]).then(() => {
           console.log("[AuthContext] Session saved successfully");
-        } catch (error) {
+        }).catch((error) => {
           console.error("Error saving session on logout:", error);
-        }
+        });
       }
       sessionStartRef.current = null;
       loginRecordedRef.current = false;
     }
     
-    // Sign out and redirect
+    // Sign out and redirect immediately
     try {
       console.log("[AuthContext] Calling signOut...");
       await signOut(auth);
