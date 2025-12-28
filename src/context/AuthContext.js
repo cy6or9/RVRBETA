@@ -26,8 +26,12 @@ export function AuthProvider({ children }) {
   // Handle redirect result from Google Sign-In
   useEffect(() => {
     console.log("[AuthContext] Checking for redirect result...");
+    console.log("[AuthContext] Current auth state:", auth.currentUser?.email || "no user");
+    
     getRedirectResult(auth)
       .then(async (result) => {
+        console.log("[AuthContext] getRedirectResult resolved:", result);
+        
         if (result && result.user) {
           console.log("[AuthContext] Redirect result found, user:", result.user.email);
           
@@ -55,7 +59,11 @@ export function AuthProvider({ children }) {
           
           console.log("[AuthContext] Login recorded, waiting for onAuthStateChanged...");
         } else {
-          console.log("[AuthContext] No redirect result");
+          console.log("[AuthContext] No redirect result, checking current user...");
+          // Check if user is already logged in from persistence
+          if (auth.currentUser) {
+            console.log("[AuthContext] User already logged in from persistence:", auth.currentUser.email);
+          }
         }
       })
       .catch((error) => {

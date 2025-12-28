@@ -29,6 +29,15 @@ const firebaseEnabled =
   process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN &&
   process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
 
+if (typeof window !== 'undefined') {
+  console.log("[Firebase] Configuration check:", {
+    enabled: firebaseEnabled,
+    authDomain: firebaseConfig.authDomain,
+    projectId: firebaseConfig.projectId,
+    currentURL: window.location.href
+  });
+}
+
 // Initialize Firebase app (always, using dummy values if needed for build)
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 
@@ -59,8 +68,19 @@ export async function loginWithGoogle() {
   if (!firebaseEnabled) {
     throw new Error("Firebase Auth is not configured. Please set environment variables.");
   }
-  // Use redirect instead of popup to avoid COOP errors
-  await signInWithRedirect(auth, provider);
+  
+  console.log("[Firebase] Starting Google sign-in redirect...");
+  console.log("[Firebase] Auth domain:", firebaseConfig.authDomain);
+  console.log("[Firebase] Current location:", window.location.href);
+  
+  try {
+    // Use redirect instead of popup to avoid COOP errors
+    await signInWithRedirect(auth, provider);
+    console.log("[Firebase] Redirect initiated");
+  } catch (error) {
+    console.error("[Firebase] signInWithRedirect error:", error);
+    throw error;
+  }
 }
 
 export async function logoutUser() {
