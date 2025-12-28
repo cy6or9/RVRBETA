@@ -21,6 +21,7 @@ export function AuthProvider({ children }) {
   const router = useRouter();
   const sessionStartRef = useRef(null);
   const loginRecordedRef = useRef(false);
+  const previousUserRef = useRef(null);
 
   // Handle redirect result from Google Sign-In
   useEffect(() => {
@@ -63,13 +64,15 @@ export function AuthProvider({ children }) {
   // Single auth state listener
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
+      const prevUser = previousUserRef.current;
+      
       // Handle logout - save session if user is logging out
-      if (user && !firebaseUser && sessionStartRef.current) {
+      if (prevUser && !firebaseUser && sessionStartRef.current) {
         const elapsedSeconds = Math.floor((Date.now() - sessionStartRef.current) / 1000);
         if (elapsedSeconds > 5) {
           try {
-            await saveSessionDuration(user.uid, elapsedSeconds);
-            await setLastLogout(user.uid);
+            await saveSessionDuration(prevUser.uid, elapsedSeconds);
+            await setLastLogout(prevUser.uid);
           } catch (error) {
             console.error("Error saving session on logout:", error);
           }
@@ -88,12 +91,14 @@ export function AuthProvider({ children }) {
         });
       }
 
+      // Update refs and state
+      previousUserRef.current = firebaseUser;
       setUser(firebaseUser || null);
       setLoading(false);
     });
 
     return () => unsub();
-  }, [user]);
+  }, []);
 
   // Handle page close/hide: save session duration
   useEffect(() => {
