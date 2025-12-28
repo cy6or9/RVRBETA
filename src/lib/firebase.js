@@ -36,18 +36,19 @@ const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 export const auth = getAuth(app);
 export const firestore = getFirestore(app);
 
+// Set persistence BEFORE any auth operations (synchronously during initialization)
+if (firebaseEnabled && typeof window !== 'undefined') {
+  // Set persistence immediately and wait for it
+  setPersistence(auth, browserLocalPersistence).catch((err) => {
+    console.error("[Firebase] Failed to set persistence:", err);
+  });
+}
+
 // Google Auth provider
 const provider = new GoogleAuthProvider();
 provider.setCustomParameters({
   prompt: "select_account",
 });
-
-// Persist login across page reloads (only if Firebase is enabled)
-if (firebaseEnabled && typeof window !== 'undefined') {
-  setPersistence(auth, browserLocalPersistence).catch((err) => {
-    console.error("[Firebase] Failed to set persistence:", err);
-  });
-}
 
 // Export app and provider
 export { app, provider, firebaseEnabled, getRedirectResult };

@@ -25,9 +25,12 @@ export function AuthProvider({ children }) {
 
   // Handle redirect result from Google Sign-In
   useEffect(() => {
+    console.log("[AuthContext] Checking for redirect result...");
     getRedirectResult(auth)
       .then(async (result) => {
         if (result && result.user) {
+          console.log("[AuthContext] Redirect result found, user:", result.user.email);
+          
           // Create user profile if needed
           try {
             await createUserProfile(result.user.uid, {
@@ -50,12 +53,14 @@ export function AuthProvider({ children }) {
           sessionStartRef.current = Date.now();
           loginRecordedRef.current = true;
           
-          // User state will be set by onAuthStateChanged
+          console.log("[AuthContext] Login recorded, waiting for onAuthStateChanged...");
+        } else {
+          console.log("[AuthContext] No redirect result");
         }
       })
       .catch((error) => {
+        console.error("[AuthContext] getRedirectResult error:", error);
         if (error.code !== 'auth/popup-closed-by-user') {
-          console.error("[AuthContext] Login error:", error);
           alert("Login failed: " + error.message);
         }
       });
@@ -63,7 +68,9 @@ export function AuthProvider({ children }) {
 
   // Single auth state listener
   useEffect(() => {
+    console.log("[AuthContext] Setting up onAuthStateChanged listener");
     const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
+      console.log("[AuthContext] Auth state changed:", firebaseUser ? firebaseUser.email : "null");
       const prevUser = previousUserRef.current;
       
       // Handle logout - save session if user is logging out
@@ -83,6 +90,7 @@ export function AuthProvider({ children }) {
 
       // Handle login - record session start ONCE
       if (firebaseUser && !loginRecordedRef.current) {
+        console.log("[AuthContext] Recording new login session");
         loginRecordedRef.current = true;
         sessionStartRef.current = Date.now();
         
@@ -95,9 +103,13 @@ export function AuthProvider({ children }) {
       previousUserRef.current = firebaseUser;
       setUser(firebaseUser || null);
       setLoading(false);
+      console.log("[AuthContext] User state updated, loading:", false);
     });
 
-    return () => unsub();
+    return () => {
+      console.log("[AuthContext] Cleaning up auth listener");
+      unsub();
+    };
   }, []);
 
   // Handle page close/hide: save session duration

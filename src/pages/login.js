@@ -13,7 +13,11 @@ export default function LoginPage() {
   const { user, isAdmin, loading } = useAuth();
 
   useEffect(() => {
+    console.log("[LoginPage] Effect running - loading:", loading, "user:", user?.email || "null", "isAdmin:", isAdmin);
+    
     if (!loading && user) {
+      console.log("[LoginPage] User authenticated, preparing redirect...");
+      
       // Defer navigation to next frame to prevent forced reflow
       requestAnimationFrame(() => {
         const redirect = router.query.redirect;
@@ -21,13 +25,16 @@ export default function LoginPage() {
         if (redirect === 'admin') {
           // User wants to access admin, check if they're admin
           if (isAdmin) {
+            console.log("[LoginPage] Redirecting to admin");
             router.replace("/admin");
           } else {
             alert("Admin privileges required. Redirecting to homepage.");
+            console.log("[LoginPage] Not admin, redirecting to home");
             router.replace("/");
           }
         } else {
           // Normal login - redirect to river conditions or home
+          console.log("[LoginPage] Redirecting to river-conditions");
           router.replace("/river-conditions");
         }
       });
