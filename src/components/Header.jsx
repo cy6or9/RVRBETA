@@ -1,11 +1,33 @@
 import Link from "next/link";
 import { useRouter } from "next/router";
 import { useAuth } from "@/context/AuthContext";
+import { useState } from "react";
 
 export default function Header() {
   const router = useRouter();
   const pathname = router.pathname;
   const { user, isAdmin, loginWithGoogle, logout, loading } = useAuth();
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+
+  const handleLogout = async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    if (isLoggingOut) {
+      console.log("[Header] Logout already in progress, ignoring click");
+      return;
+    }
+    
+    console.log("[Header] Logout button clicked");
+    setIsLoggingOut(true);
+    
+    try {
+      await logout();
+    } catch (error) {
+      console.error("[Header] Logout error:", error);
+      setIsLoggingOut(false);
+    }
+  };
 
   const navItems = [
     { name: "River Conditions", href: "/river-conditions" },
@@ -59,13 +81,11 @@ export default function Header() {
                   </Link>
                 )}
                 <button
-                  onClick={() => {
-                    console.log("[Header] Logout button clicked");
-                    logout();
-                  }}
-                  className="text-xs text-foreground/70 hover:text-[hsl(142,70%,35%)] transition-colors"
+                  onClick={handleLogout}
+                  disabled={isLoggingOut}
+                  className="text-xs text-foreground/70 hover:text-[hsl(142,70%,35%)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  Logout
+                  {isLoggingOut ? "Logging out..." : "Logout"}
                 </button>
               </>
             ) : (
