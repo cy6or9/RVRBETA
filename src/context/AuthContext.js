@@ -93,7 +93,7 @@ export function AuthProvider({ children }) {
     });
 
     return () => unsub();
-  }, []);
+  }, [user]);
 
   // Handle page close/hide: save session duration
   useEffect(() => {
