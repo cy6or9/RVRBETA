@@ -1,7 +1,7 @@
 // /src/pages/login.js
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/router";
 import { useAuth } from "@/context/AuthContext";
 import { loginWithGoogle } from "@/lib/firebase";
@@ -11,17 +11,31 @@ import { LogIn, Loader2 } from "lucide-react";
 export default function LoginPage() {
   const router = useRouter();
   const { user, isAdmin, loading } = useAuth();
+  const [isRedirecting, setIsRedirecting] = useState(false);
 
   useEffect(() => {
     console.log("[LoginPage] Effect running - loading:", loading, "user:", user?.email || "null", "isAdmin:", isAdmin);
     
-    if (!loading && user) {
+    // Only redirect if we have a user AND we're not in the middle of processing a redirect
+    // Check if this is a redirect from Google by looking at the URL
+    const isReturningFromGoogle = typeof window !== 'undefined' && 
+      (window.location.search.includes('state=') || window.location.hash.includes('access_token'));
+    
+    if (isReturningFromGoogle) {
+      console.log("[LoginPage] Detected return from Google, waiting for auth...");
+      // Don't redirect yet, let AuthContext handle the redirect result first
+      return;
+    }
+    
+    // Wait for auth to fully initialize and avoid double redirects
+    if (!loading && user && !isRedirecting) {
       console.log("[LoginPage] User authenticated, preparing redirect...");
+      setIsRedirecting(true);
       
-      // Defer navigation to next frame to prevent forced reflow
-      requestAnimationFrame(() => {
-        const redirect = router.query.redirect;
-        
+      const redirect = router.query.redirect;
+      
+      // Small delay to ensure auth state is fully settled
+      setTimeout(() => {
         if (redirect === 'admin') {
           // User wants to access admin, check if they're admin
           if (isAdmin) {
@@ -37,9 +51,9 @@ export default function LoginPage() {
           console.log("[LoginPage] Redirecting to river-conditions");
           router.replace("/river-conditions");
         }
-      });
+      }, 500);
     }
-  }, [loading, user, isAdmin, router]);
+  }, [loading, user, isAdmin, router, isRedirecting]);
 
   const handleLogin = async () => {
     try {

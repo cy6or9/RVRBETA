@@ -18,18 +18,21 @@ export const useAuth = () => useContext(AuthContext);
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [redirectHandled, setRedirectHandled] = useState(false);
   const router = useRouter();
   const sessionStartRef = useRef(null);
   const loginRecordedRef = useRef(false);
   const previousUserRef = useRef(null);
 
-  // Handle redirect result from Google Sign-In
+  // Handle redirect result from Google Sign-In - MUST happen before any navigation
   useEffect(() => {
     console.log("[AuthContext] Checking for redirect result...");
     console.log("[AuthContext] Current auth state:", auth.currentUser?.email || "no user");
     
-    getRedirectResult(auth)
-      .then(async (result) => {
+    // Set a flag to prevent navigation until redirect is handled
+    const handleRedirect = async () => {
+      try {
+        const result = await getRedirectResult(auth);
         console.log("[AuthContext] getRedirectResult resolved:", result);
         
         if (result && result.user) {
@@ -65,13 +68,18 @@ export function AuthProvider({ children }) {
             console.log("[AuthContext] User already logged in from persistence:", auth.currentUser.email);
           }
         }
-      })
-      .catch((error) => {
+      } catch (error) {
         console.error("[AuthContext] getRedirectResult error:", error);
         if (error.code !== 'auth/popup-closed-by-user') {
           alert("Login failed: " + error.message);
         }
-      });
+      } finally {
+        // Mark redirect as handled
+        setRedirectHandled(true);
+      }
+    };
+    
+    handleRedirect();
   }, []);
 
   // Single auth state listener
