@@ -38,10 +38,25 @@ export function UserProfileProvider({ children }) {
 
       try {
         setLoading(true);
+        
+        // Try to load from cache first for faster initial render
+        const cachedProfile = localStorage.getItem(`userProfile_${user.uid}`);
+        if (cachedProfile) {
+          console.log("[UserProfileContext] Using cached profile");
+          setProfile(JSON.parse(cachedProfile));
+          setLoading(false);
+        }
+        
+        // Then fetch fresh data in background
+        console.log("[UserProfileContext] Fetching fresh profile from Firestore");
         const userProfile = await getUserProfile(user.uid);
         setProfile(userProfile);
+        
+        // Update cache
+        localStorage.setItem(`userProfile_${user.uid}`, JSON.stringify(userProfile));
+        console.log("[UserProfileContext] Profile loaded and cached");
       } catch (error) {
-
+        console.error("[UserProfileContext] Error loading profile:", error);
         setProfile(defaultUserProfile);
       } finally {
         setLoading(false);
