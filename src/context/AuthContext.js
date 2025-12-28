@@ -177,6 +177,16 @@ export function AuthProvider({ children }) {
   // Logout function
   const logout = useCallback(async () => {
     console.log("[AuthContext] Logout function called");
+    
+    // Determine where to redirect after logout
+    const currentPath = router.pathname;
+    const protectedRoutes = ['/profile', '/admin'];
+    const isProtectedRoute = protectedRoutes.some(route => currentPath.startsWith(route));
+    const redirectPath = isProtectedRoute ? '/' : currentPath;
+    
+    console.log("[AuthContext] Current path:", currentPath);
+    console.log("[AuthContext] Redirect path after logout:", redirectPath);
+    
     // Save session before logout
     if (sessionStartRef.current && user) {
       console.log("[AuthContext] Saving session before logout");
@@ -200,8 +210,8 @@ export function AuthProvider({ children }) {
       await signOut(auth);
       console.log("[AuthContext] signOut successful");
       setUser(null);
-      console.log("[AuthContext] Redirecting to /login");
-      router.push("/login");
+      console.log("[AuthContext] Redirecting to:", redirectPath);
+      router.push(redirectPath);
     } catch (error) {
       console.error("[AuthContext] Logout failed:", error);
       alert("Logout failed: " + error.message);
