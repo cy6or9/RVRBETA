@@ -17,7 +17,10 @@ const privateKey = (
   process.env.FIREBASE_ADMIN_PRIVATE_KEY ||
   process.env.FIREBASE_PRIVATE_KEY ||
   ""
-).replace(/\\n/g, "\n");
+)
+  .replace(/\\n/g, "\n") // Replace escaped newlines
+  .replace(/^"|"$/g, "") // Remove surrounding quotes if present
+  .trim();
 
 const storageBucket =
   process.env.FIREBASE_ADMIN_STORAGE_BUCKET ||
