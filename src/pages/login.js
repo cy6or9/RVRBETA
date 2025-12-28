@@ -14,21 +14,23 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (!loading && user) {
-      // Check if there's a redirect parameter
-      const redirect = router.query.redirect;
-      
-      if (redirect === 'admin') {
-        // User wants to access admin, check if they're admin
-        if (isAdmin) {
-          router.replace("/admin");
+      // Defer navigation to next frame to prevent forced reflow
+      requestAnimationFrame(() => {
+        const redirect = router.query.redirect;
+        
+        if (redirect === 'admin') {
+          // User wants to access admin, check if they're admin
+          if (isAdmin) {
+            router.replace("/admin");
+          } else {
+            alert("Admin privileges required. Redirecting to homepage.");
+            router.replace("/");
+          }
         } else {
-          alert("Admin privileges required. Redirecting to homepage.");
-          router.replace("/");
+          // Normal login - redirect to river conditions or home
+          router.replace("/river-conditions");
         }
-      } else {
-        // Normal login - redirect to river conditions or home
-        router.replace("/river-conditions");
-      }
+      });
     }
   }, [loading, user, isAdmin, router]);
 
