@@ -6,6 +6,7 @@ import { initializeApp, getApps, getApp } from "firebase/app";
 import {
   getAuth,
   GoogleAuthProvider,
+  signInWithPopup,
   signInWithRedirect,
   getRedirectResult,
   signOut,
@@ -60,7 +61,7 @@ provider.setCustomParameters({
 });
 
 // Export app and provider
-export { app, provider, firebaseEnabled, getRedirectResult };
+export { app, provider, firebaseEnabled, getRedirectResult, signInWithPopup };
 
 // --- AUTH HELPERS ---
 
@@ -69,16 +70,25 @@ export async function loginWithGoogle() {
     throw new Error("Firebase Auth is not configured. Please set environment variables.");
   }
   
-  console.log("[Firebase] Starting Google sign-in redirect...");
+  console.log("[Firebase] Starting Google sign-in...");
   console.log("[Firebase] Auth domain:", firebaseConfig.authDomain);
   console.log("[Firebase] Current location:", window.location.href);
   
   try {
-    // Use redirect instead of popup to avoid COOP errors
-    await signInWithRedirect(auth, provider);
-    console.log("[Firebase] Redirect initiated");
+    // Try popup first (more reliable), fallback to redirect if blocked
+    try {
+      console.log("[Firebase] Attempting popup sign-in...");
+      const result = await signInWithPopup(auth, provider);
+      console.log("[Firebase] Popup sign-in successful:", result.user.email);
+      return result;
+    } catch (popupError) {
+      console.log("[Firebase] Popup blocked or failed, falling back to redirect:", popupError);
+      // If popup fails (blocked), use redirect as fallback
+      await signInWithRedirect(auth, provider);
+      console.log("[Firebase] Redirect initiated");
+    }
   } catch (error) {
-    console.error("[Firebase] signInWithRedirect error:", error);
+    console.error("[Firebase] Sign-in error:", error);
     throw error;
   }
 }

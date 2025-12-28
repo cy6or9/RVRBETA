@@ -57,13 +57,25 @@ export default function LoginPage() {
 
   const handleLogin = async () => {
     try {
-      // loginWithGoogle uses redirect - user will be redirected to Google
-      // After Google auth, they'll return to this app and getRedirectResult will handle it
-      await loginWithGoogle();
-      // Note: Code after this won't run because browser redirects to Google
+      console.log("[LoginPage] Starting login...");
+      // loginWithGoogle now tries popup first, then redirect
+      const result = await loginWithGoogle();
+      
+      // If popup succeeded, result will be returned
+      if (result?.user) {
+        console.log("[LoginPage] Popup login successful:", result.user.email);
+        // User state will be updated by AuthContext
+      }
+      // If redirect was used, code after this won't run because browser redirects
     } catch (err) {
       console.error("Login error:", err);
-      alert("Google sign-in failed. Please try again.");
+      if (err.code === 'auth/popup-blocked') {
+        alert("Popup was blocked. Please allow popups for this site and try again.");
+      } else if (err.code === 'auth/popup-closed-by-user') {
+        console.log("User closed the popup");
+      } else {
+        alert("Google sign-in failed. Please try again.");
+      }
     }
   };
 
