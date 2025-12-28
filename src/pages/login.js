@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/router";
 import { useAuth } from "@/context/AuthContext";
 import { loginWithGoogle } from "@/lib/firebase";
+import { createUserProfile, setLastLogin } from "@/lib/userProfile";
 import { Button } from "@/components/ui/button";
 import { LogIn, Loader2 } from "lucide-react";
 
@@ -64,6 +65,23 @@ export default function LoginPage() {
       // If popup succeeded, result will be returned
       if (result?.user) {
         console.log("[LoginPage] Popup login successful:", result.user.email);
+        
+        // Create user profile immediately for popup logins
+        try {
+          console.log("[LoginPage] Creating user profile...");
+          await createUserProfile(result.user.uid, {
+            email: result.user.email,
+            displayName: result.user.displayName,
+            photoURL: result.user.photoURL,
+          });
+          
+          await setLastLogin(result.user.uid, result.user.email);
+          console.log("[LoginPage] User profile created and login recorded");
+        } catch (error) {
+          console.error("[LoginPage] Error setting up user profile:", error);
+          // Don't fail the login if profile creation fails
+        }
+        
         // User state will be updated by AuthContext
       }
       // If redirect was used, code after this won't run because browser redirects

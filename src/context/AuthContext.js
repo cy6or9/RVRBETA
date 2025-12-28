@@ -110,9 +110,14 @@ export function AuthProvider({ children }) {
         loginRecordedRef.current = true;
         sessionStartRef.current = Date.now();
         
-        setLastLogin(firebaseUser.uid, firebaseUser.email).catch((error) => {
-          console.error("Error recording login:", error);
-        });
+        // Only call setLastLogin if it wasn't already called (e.g., by popup login handler)
+        // Check if the user just logged in (within last 5 seconds)
+        const justLoggedIn = !prevUser || (Date.now() - (sessionStartRef.current || 0)) < 5000;
+        if (!justLoggedIn) {
+          setLastLogin(firebaseUser.uid, firebaseUser.email).catch((error) => {
+            console.error("Error recording login:", error);
+          });
+        }
       }
 
       // Update refs and state
