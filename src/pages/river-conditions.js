@@ -277,6 +277,45 @@ const windDirLabel = (deg) => {
   return "NNW";
 };
 
+// Map weather condition text to appropriate emoji icon
+const getWeatherIcon = (shortForecast, precip = 0) => {
+  if (!shortForecast) {
+    // Fallback to precip-based if no forecast text
+    return precip >= 80 ? "⚡️" : precip >= 50 ? "🌧" : precip >= 20 ? "☁️" : "🌤";
+  }
+  
+  const forecast = shortForecast.toLowerCase();
+  
+  // Thunderstorms
+  if (forecast.includes('thunder') || forecast.includes('tstorm')) return "⛈";
+  
+  // Rain/Precipitation
+  if (forecast.includes('rain') || forecast.includes('shower')) {
+    if (forecast.includes('heavy')) return "🌧";
+    if (forecast.includes('light')) return "🌦";
+    return "🌧";
+  }
+  
+  // Snow
+  if (forecast.includes('snow') || forecast.includes('flurr')) return "🌨";
+  if (forecast.includes('sleet') || forecast.includes('freezing')) return "🌨";
+  
+  // Fog/Mist
+  if (forecast.includes('fog') || forecast.includes('mist')) return "🌫";
+  
+  // Cloudy
+  if (forecast.includes('overcast') || forecast.includes('cloudy')) return "☁️";
+  if (forecast.includes('mostly cloudy')) return "☁️";
+  if (forecast.includes('partly cloudy') || forecast.includes('partly sunny')) return "⛅";
+  
+  // Clear/Sunny
+  if (forecast.includes('clear') || forecast.includes('sunny')) return "☀️";
+  if (forecast.includes('mostly clear') || forecast.includes('mostly sunny')) return "🌤";
+  
+  // Default based on precipitation probability
+  return precip >= 50 ? "🌧" : precip >= 20 ? "☁️" : "🌤";
+};
+
 // Mapping for numeric hazardCode (0–3) coming from API
 const HAZARD_LEVELS = {
   0: { label: "Normal", color: "#00a86b" },
@@ -1385,8 +1424,8 @@ export default function RiverConditions() {
 
   const precip = useMemo(() => weather?.precip ?? 0, [weather?.precip]);
   const precipIcon = useMemo(() => 
-    precip >= 80 ? "⚡️" : precip >= 50 ? "🌧" : precip >= 20 ? "☁️" : "🌤",
-    [precip]
+    getWeatherIcon(weather?.shortForecast, precip),
+    [weather?.shortForecast, precip]
   );
 
   const mapSrc = useMemo(() => 
@@ -1806,10 +1845,13 @@ export default function RiverConditions() {
           </button>
 
           <div className="text-xs text-right">
-            <p className="font-semibold mb-1">Precipitation</p>
+            <p className="font-semibold mb-1">{weather?.shortForecast || 'Conditions'}</p>
             <p>
-              <span style={{ fontSize: '3em', lineHeight: 0.8, verticalAlign: 'middle' }}>{precipIcon}</span> {precip.toFixed(0)}%
+              <span style={{ fontSize: '3em', lineHeight: 0.8, verticalAlign: 'middle' }}>{precipIcon}</span>
             </p>
+            {precip > 0 && (
+              <p className="text-[10px] opacity-70 mt-1">{precip.toFixed(0)}% chance</p>
+            )}
           </div>
         </div>
 
