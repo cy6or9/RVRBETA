@@ -77,10 +77,11 @@ export default async function handler(req, res) {
         return null;
       };
 
-      return {
+      const user = {
         uid: doc.id,
         email: data.email || "",
         displayName: data.displayName || "",
+        photoURL: data.photoURL || null,
         privileges: {
           tier: data.privileges?.tier || "Basic",
         },
@@ -97,10 +98,20 @@ export default async function handler(req, res) {
               lon: data.lastLocation.lon,
               city: data.lastLocation.city || null,
               state: data.lastLocation.state || null,
+              county: data.lastLocation.county || null,
               updatedAt: convertTimestamp(data.lastLocation.updatedAt),
             }
           : null,
       };
+      
+      // Log user data for debugging
+      console.log("[API /admin/users] User:", user.email, {
+        hasPhoto: !!user.photoURL,
+        hasLocation: !!user.lastLocation,
+        locationData: user.lastLocation ? `${user.lastLocation.city}, ${user.lastLocation.state}` : 'none'
+      });
+      
+      return user;
     });
 
     console.log("[API /admin/users] Returning", users.length, "users");

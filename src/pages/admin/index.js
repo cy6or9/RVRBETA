@@ -30,6 +30,7 @@ export default function AdminUserPrivilegesPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [tierFilter, setTierFilter] = useState("All");
   const [sortBy, setSortBy] = useState("lastLogin"); // "lastLogin" | "timeSpent"
+  const [usingFallback, setUsingFallback] = useState(false);
 
   const {
     data: users = [],
@@ -40,20 +41,27 @@ export default function AdminUserPrivilegesPage() {
     queryFn: async () => {
       try {
         // Try server-side API first
+        console.log("[Admin] Fetching from server API...");
         const response = await fetch("/api/admin/users");
         if (response.ok) {
           const data = await response.json();
+          console.log("[Admin] Server API returned:", data.length, "users");
+          console.log("[Admin] Sample user:", data[0]);
           // If we got data, return it
           if (data && data.length > 0) {
+            setUsingFallback(false);
             return data;
           }
+        } else {
+          console.log("[Admin] Server API failed with status:", response.status);
         }
       } catch (err) {
-        console.log("[Admin] Server API failed, using client SDK:", err);
+        console.log("[Admin] Server API error, using client SDK:", err);
       }
       
       // Fallback to client SDK if server fails or returns empty
-      console.log("[Admin] Using client SDK to fetch users");
+      console.log("[Admin] Using client SDK fallback to fetch users");
+      setUsingFallback(true);
       const usersRef = collection(firestore, "userProfiles");
       const snapshot = await getDocs(usersRef);
       
@@ -242,6 +250,17 @@ export default function AdminUserPrivilegesPage() {
           </div>
         </div>
       </header>
+
+      {/* Fallback Warning Banner */}
+      {usingFallback && (
+        <div className="bg-yellow-50 border-b-2 border-yellow-400">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2">
+            <p className="text-sm font-bold text-red-600">
+              Fallback Data being displayed. Might NOT show detailed information and actions might not be available or operable.
+            </p>
+          </div>
+        </div>
+      )}
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
         <Card className="p-4 sm:p-6 space-y-4 sm:space-y-6">
