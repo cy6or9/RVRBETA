@@ -29,26 +29,15 @@ const storageBucket =
 // Log what we have (without exposing sensitive data)
 console.log("[Firebase Admin] Config check:", {
   hasProjectId: !!projectId,
-  projectId: projectId,
   hasClientEmail: !!clientEmail,
-  clientEmail: clientEmail ? clientEmail.substring(0, 20) + "..." : "missing",
   hasPrivateKey: !!privateKey,
   privateKeyLength: privateKey.length,
   privateKeyStarts: privateKey.substring(0, 30),
 });
 
 // Initialize Firebase Admin SDK
-let adminInitialized = false;
 if (!admin.apps.length) {
   try {
-    if (!projectId || !clientEmail || !privateKey) {
-      const missing = [];
-      if (!projectId) missing.push("projectId");
-      if (!clientEmail) missing.push("clientEmail");
-      if (!privateKey) missing.push("privateKey");
-      throw new Error(`Missing Firebase Admin credentials: ${missing.join(", ")}`);
-    }
-    
     admin.initializeApp({
       credential: admin.credential.cert({
         projectId,
@@ -56,18 +45,23 @@ if (!admin.apps.length) {
         privateKey,
       }),
       storageBucket,
+      // Specify the database ID explicitly
+      databaseURL: `https://${projectId}.firebaseio.com`,
     });
-    adminInitialized = true;
     console.log("[Firebase Admin] Initialized successfully");
   } catch (error) {
-    console.error("[Firebase Admin] Initialization failed:", error.message);
-    console.error("[Firebase Admin] Full error:", error);
-    // Don't throw - allow app to continue but adminDb will be null
+    console.error("[Firebase Admin] Initialization failed:", error);
+    throw error;
   }
 }
 
-// Export Firestore instance (null if not initialized)
-export const adminDb = adminInitialized || admin.apps.length ? admin.firestore() : null;
+// Export Firestore instance with explicit database configuration
+const firestoreDatabaseId = process.env.FIRESTORE_DATABASE_ID || '(default)';
+console.log("[Firebase Admin] Using Firestore database:", firestoreDatabaseId);
+
+export const adminDb = firestoreDatabaseId === '(default)' 
+  ? admin.firestore() 
+  : admin.firestore(admin.app(), firestoreDatabaseId);
 
 // Export Storage (for upload API)
 export const storage = storageBucket ? admin.storage().bucket() : null;

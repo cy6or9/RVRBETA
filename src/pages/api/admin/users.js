@@ -11,18 +11,22 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  // Check if adminDb is available
-  if (!adminDb) {
-    console.error("[API /admin/users] Firebase Admin not initialized");
-    return res.status(500).json({
-      error: "Firebase Admin SDK not initialized",
-      details: "Check server environment variables for Firebase Admin credentials",
-    });
-  }
-
   try {
+    // Check if adminDb is available
+    if (!adminDb) {
+      console.error("[API /admin/users] Admin DB not initialized");
+      return res.status(503).json({ 
+        error: "Database not configured",
+        details: "Firebase Admin SDK not properly initialized"
+      });
+    }
+
     console.log("[API /admin/users] Attempting to fetch userProfiles collection");
-    const snapshot = await adminDb.collection("userProfiles").get();
+    
+    // Try to get the collection
+    const collectionRef = adminDb.collection("userProfiles");
+    const snapshot = await collectionRef.get();
+    
     console.log("[API /admin/users] Successfully fetched", snapshot.size, "users");
 
     const users = snapshot.docs.map((doc) => {
@@ -79,6 +83,17 @@ export default async function handler(req, res) {
     console.error("[/api/admin/users] Error:", error);
     console.error("[/api/admin/users] Error stack:", error.stack);
     console.error("[/api/admin/users] Error code:", error.code);
+    
+    // Handle Firestore NOT_FOUND error specifically
+    if (error.code === 5 || error.message?.includes('NOT_FOUND')) {
+      return res.status(500).json({
+        error: "Firestore Database Not Found",
+        details: "The Firestore database or collection does not exist. Please ensure Firestore is enabled in your Firebase project and the 'userProfiles' collection exists.",
+        code: error.code,
+        suggestion: "Create at least one user profile by logging in, or check your Firebase project settings."
+      });
+    }
+    
     res.status(500).json({
       error: "Internal Server Error",
       details: String(error.message),
