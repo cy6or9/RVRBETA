@@ -74,7 +74,12 @@ export default function LoginPage() {
         });
         
         // Record login in background (don't block)
-        setLastLogin(result.user.uid, result.user.email).catch((error) => {
+        setLastLogin(
+          result.user.uid, 
+          result.user.email,
+          result.user.displayName || '',
+          result.user.photoURL
+        ).catch((error) => {
           console.error("[LoginPage] Error recording login:", error);
         });
         

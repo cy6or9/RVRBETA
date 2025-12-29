@@ -49,9 +49,14 @@ export function AuthProvider({ children }) {
             console.error("[AuthContext] Error creating user profile:", error);
           }
           
-          // Record login
+          // Record login with full user data
           try {
-            await setLastLogin(result.user.uid, result.user.email);
+            await setLastLogin(
+              result.user.uid, 
+              result.user.email,
+              result.user.displayName || '',
+              result.user.photoURL
+            );
           } catch (error) {
             console.error("[AuthContext] Error recording login:", error);
           }

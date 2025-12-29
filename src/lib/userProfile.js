@@ -97,21 +97,47 @@ export async function createUserProfile(userId, initialData = {}) {
 
   try {
     const userRef = doc(db, "userProfiles", userId);
-    const profile = {
-      ...defaultUserProfile,
-      ...initialData,
-      privileges: {
-        tier: "Basic", // Always default to Basic
-        ...initialData.privileges,
-      },
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    };
+    
+    // Check if profile already exists
+    const existingDoc = await getDoc(userRef);
+    
+    if (existingDoc.exists()) {
+      // Profile exists - only update the fields that are provided
+      console.log("[userProfile] Profile exists, updating with:", Object.keys(initialData));
+      const updates = {
+        ...initialData,
+        updatedAt: serverTimestamp(),
+      };
+      
+      // Don't overwrite privileges if not provided
+      if (initialData.privileges) {
+        updates.privileges = {
+          ...(existingDoc.data().privileges || {}),
+          ...initialData.privileges,
+        };
+      }
+      
+      await updateDoc(userRef, updates);
+      return { ...existingDoc.data(), ...updates };
+    } else {
+      // New profile - create with defaults
+      console.log("[userProfile] Creating new profile for:", initialData.email);
+      const profile = {
+        ...defaultUserProfile,
+        ...initialData,
+        privileges: {
+          tier: "Basic", // Always default to Basic
+          ...initialData.privileges,
+        },
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      };
 
-    await setDoc(userRef, profile);
-
-    return profile;
+      await setDoc(userRef, profile);
+      return profile;
+    }
   } catch (error) {
+    console.error("[userProfile] Error in createUserProfile:", error);
     throw error;
   }
 }
@@ -313,7 +339,7 @@ export async function removePreferredStation(userId, stationId) {
  * @param {string} userId - Firebase user UID
  * @param {string} email - User email
  */
-export async function setLastLogin(userId, email) {
+export async function setLastLogin(userId, email, displayName = '', photoURL = null) {
   if (!firebaseEnabled || !db) return;
 
   try {
@@ -321,17 +347,22 @@ export async function setLastLogin(userId, email) {
     
     // Use setDoc with merge: true to safely create or update
     // This avoids the "Failed to get document because client is offline" error
-    await setDoc(userRef, {
+    const updates = {
       uid: userId,
-      email,
       stats: {
         lastLoginAt: serverTimestamp(),
       },
-      privileges: {
-        tier: "Basic", // Always ensure Basic tier for new users
-      },
       updatedAt: serverTimestamp(),
-    }, { merge: true });
+    };
+    
+    // Only set these fields if they have values
+    if (email) updates.email = email;
+    if (displayName) updates.displayName = displayName;
+    if (photoURL) updates.photoURL = photoURL;
+    
+    console.log("[userProfile] setLastLogin updating:", { email, displayName, hasPhoto: !!photoURL });
+    
+    await setDoc(userRef, updates, { merge: true });
     
   } catch (error) {
     console.error("Error setting last login:", error);

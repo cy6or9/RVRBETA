@@ -57,6 +57,18 @@ export default async function handler(req, res) {
 
     const users = snapshot.docs.map((doc) => {
       const data = doc.data();
+      
+      // Log raw Firestore data for debugging
+      console.log("[API /admin/users] RAW data for user", doc.id, ":", {
+        hasEmail: !!data.email,
+        hasDisplayName: !!data.displayName,
+        hasPhotoURL: !!data.photoURL,
+        hasStats: !!data.stats,
+        hasLastLogin: !!data.stats?.lastLoginAt,
+        lastLoginType: data.stats?.lastLoginAt ? typeof data.stats.lastLoginAt : 'undefined',
+        email: data.email || '(empty)',
+        displayName: data.displayName || '(empty)',
+      });
 
       // Convert Firestore Timestamps to ISO strings
       const convertTimestamp = (timestamp) => {
