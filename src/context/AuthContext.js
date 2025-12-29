@@ -95,16 +95,10 @@ export function AuthProvider({ children }) {
       const prevUser = previousUserRef.current;
       
       // Handle logout - save session if user is logging out
+      // NOTE: Stats saving on logout is skipped because user is already signed out
+      // and Firestore rules prevent writes. Session duration is saved before signOut.
       if (prevUser && !firebaseUser && sessionStartRef.current) {
-        const elapsedSeconds = Math.floor((Date.now() - sessionStartRef.current) / 1000);
-        if (elapsedSeconds > 5) {
-          try {
-            await saveSessionDuration(prevUser.uid, elapsedSeconds);
-            await setLastLogout(prevUser.uid);
-          } catch (error) {
-            console.error("Error saving session on logout:", error);
-          }
-        }
+        console.log("[AuthContext] User logged out, clearing session refs");
         sessionStartRef.current = null;
         loginRecordedRef.current = false;
       }
@@ -186,36 +180,42 @@ export function AuthProvider({ children }) {
     console.log("[AuthContext] Current path:", currentPath);
     console.log("[AuthContext] Redirect path after logout:", redirectPath);
     
-    // Save session before logout (non-blocking with timeout)
+    // Save session BEFORE logout - MUST complete while user is still authenticated
     if (sessionStartRef.current && user) {
       console.log("[AuthContext] Saving session before logout");
       const elapsedSeconds = Math.floor((Date.now() - sessionStartRef.current) / 1000);
       if (elapsedSeconds > 5) {
-        // Run in background with longer timeout - don't block logout
-        Promise.race([
-          Promise.all([
-            saveSessionDuration(user.uid, elapsedSeconds),
-            setLastLogout(user.uid)
-          ]),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
-        ]).then(() => {
+        try {
+          // CRITICAL: Wait for saves to complete BEFORE signing out
+          // Use timeout to prevent hanging, but actually wait for completion
+          await Promise.race([
+            Promise.all([
+              saveSessionDuration(user.uid, elapsedSeconds),
+              setLastLogout(user.uid)
+            ]),
+            new Promise((_, reject) => 
+              setTimeout(() => reject(new Error('Timeout')), 3000)
+            )
+          ]);
           console.log("[AuthContext] Session saved successfully");
-        }).catch((error) => {
+        } catch (error) {
           console.error("[AuthContext] Error saving session on logout:", error);
-        });
+          // Continue with logout even if save fails
+        }
       }
       sessionStartRef.current = null;
       loginRecordedRef.current = false;
     }
-    
-    // Clear user state immediately to prevent showing wrong user during logout
-    setUser(null);
     
     // Sign out and redirect
     try {
       console.log("[AuthContext] Calling signOut...");
       await signOut(auth);
       console.log("[AuthContext] signOut successful");
+      
+      // Clear user state after signout
+      setUser(null);
+      
       console.log("[AuthContext] Redirecting to:", redirectPath);
       router.push(redirectPath);
     } catch (error) {

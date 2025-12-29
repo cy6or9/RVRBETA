@@ -80,6 +80,30 @@ export async function loginWithGoogle() {
       console.log("[Firebase] Attempting popup sign-in...");
       const result = await signInWithPopup(auth, provider);
       console.log("[Firebase] Popup sign-in successful:", result.user.email);
+      
+      // Import and call setLastLogin for popup logins
+      try {
+        const { setLastLogin, createUserProfile } = await import('./userProfile');
+        
+        // Create/update profile with auth data
+        await createUserProfile(result.user.uid, {
+          email: result.user.email,
+          displayName: result.user.displayName,
+          photoURL: result.user.photoURL,
+        });
+        
+        // Record login timestamp
+        await setLastLogin(
+          result.user.uid,
+          result.user.email,
+          result.user.displayName || '',
+          result.user.photoURL
+        );
+        console.log("[Firebase] Login tracking completed");
+      } catch (trackError) {
+        console.error("[Firebase] Error tracking login:", trackError);
+      }
+      
       return result;
     } catch (popupError) {
       console.log("[Firebase] Popup blocked or failed, falling back to redirect:", popupError);
