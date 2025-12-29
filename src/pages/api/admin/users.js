@@ -11,6 +11,15 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
+  // Check if adminDb is available
+  if (!adminDb) {
+    console.error("[API /admin/users] Firebase Admin not initialized");
+    return res.status(500).json({
+      error: "Firebase Admin SDK not initialized",
+      details: "Check server environment variables for Firebase Admin credentials",
+    });
+  }
+
   try {
     console.log("[API /admin/users] Attempting to fetch userProfiles collection");
     const snapshot = await adminDb.collection("userProfiles").get();

@@ -72,7 +72,7 @@ export function UserProfileProvider({ children }) {
           console.log("[UserProfileContext] Using fresh cached profile, skipping Firestore fetch");
           setProfile(JSON.parse(cachedProfile));
           setLoading(false);
-        } else if (cachedProfile) {
+        } else if (cachedProfile && !userChanged) {
           // Cache exists but stale - use it immediately and refresh in background
           console.log("[UserProfileContext] Using stale cache, refreshing in background");
           setProfile(JSON.parse(cachedProfile));
