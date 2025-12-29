@@ -2,7 +2,7 @@
 // Admin API endpoint to fetch all user profiles
 // Returns user list with privileges and stats
 
-import { adminDb } from "@/lib/firebaseAdmin";
+import admin, { adminDb } from "@/lib/firebaseAdmin";
 
 export default async function handler(req, res) {
   console.log("[API /admin/users] Request received");
@@ -53,78 +53,83 @@ export default async function handler(req, res) {
       throw firestoreError;
     }
     
-    console.log("[API /admin/users] Successfully fetched", snapshot.size, "users");
+    console.log("[API /admin/users] Successfully fetched", snapshot.size, "users from Firestore");
 
-    const users = snapshot.docs.map((doc) => {
-      const data = doc.data();
-      
-      // Log raw Firestore data for debugging
-      console.log("[API /admin/users] RAW data for user", doc.id, ":", {
-        hasEmail: !!data.email,
-        hasDisplayName: !!data.displayName,
-        hasPhotoURL: !!data.photoURL,
-        hasStats: !!data.stats,
-        hasLastLogin: !!data.stats?.lastLoginAt,
-        lastLoginType: data.stats?.lastLoginAt ? typeof data.stats.lastLoginAt : 'undefined',
-        email: data.email || '(empty)',
-        displayName: data.displayName || '(empty)',
-      });
-
-      // Convert Firestore Timestamps to ISO strings
-      const convertTimestamp = (timestamp) => {
-        if (!timestamp) return null;
+    // Fetch user data from Firebase Auth and merge with Firestore data
+    const users = await Promise.all(
+      snapshot.docs.map(async (doc) => {
+        const data = doc.data();
+        const uid = doc.id;
+        
+        // Fetch user from Firebase Auth to get email, displayName, photoURL
+        let authUser = null;
         try {
-          if (timestamp.toDate) {
-            return timestamp.toDate().toISOString();
-          }
-          if (timestamp instanceof Date) {
-            return timestamp.toISOString();
-          }
-          if (timestamp._seconds) {
-            return new Date(timestamp._seconds * 1000).toISOString();
-          }
-        } catch (error) {
-          console.error("Error converting timestamp:", error);
+          authUser = await admin.auth().getUser(uid);
+          console.log("[API /admin/users] Auth data for", uid, ":", {
+            email: authUser.email,
+            displayName: authUser.displayName,
+            hasPhoto: !!authUser.photoURL,
+          });
+        } catch (authError) {
+          console.error("[API /admin/users] Failed to fetch auth data for", uid, ":", authError.message);
         }
-        return null;
-      };
 
-      const user = {
-        uid: doc.id,
-        email: data.email || "",
-        displayName: data.displayName || "",
-        photoURL: data.photoURL || null,
-        privileges: {
-          tier: data.privileges?.tier || "Basic",
-        },
-        stats: {
-          lastLoginAt: convertTimestamp(data.stats?.lastLoginAt),
-          lastLoginAtRaw: data.stats?.lastLoginAt?._seconds
-            ? data.stats.lastLoginAt._seconds * 1000
-            : null,
-          totalOnlineSeconds: data.stats?.totalOnlineSeconds || 0,
-        },
-        lastLocation: data.lastLocation
-          ? {
-              lat: data.lastLocation.lat,
-              lon: data.lastLocation.lon,
-              city: data.lastLocation.city || null,
-              state: data.lastLocation.state || null,
-              county: data.lastLocation.county || null,
-              updatedAt: convertTimestamp(data.lastLocation.updatedAt),
+        // Convert Firestore Timestamps to ISO strings
+        const convertTimestamp = (timestamp) => {
+          if (!timestamp) return null;
+          try {
+            if (timestamp.toDate) {
+              return timestamp.toDate().toISOString();
             }
-          : null,
-      };
-      
-      // Log user data for debugging
-      console.log("[API /admin/users] User:", user.email, {
-        hasPhoto: !!user.photoURL,
-        hasLocation: !!user.lastLocation,
-        locationData: user.lastLocation ? `${user.lastLocation.city}, ${user.lastLocation.state}` : 'none'
-      });
-      
-      return user;
-    });
+            if (timestamp instanceof Date) {
+              return timestamp.toISOString();
+            }
+            if (timestamp._seconds) {
+              return new Date(timestamp._seconds * 1000).toISOString();
+            }
+          } catch (error) {
+            console.error("Error converting timestamp:", error);
+          }
+          return null;
+        };
+
+        const user = {
+          uid: uid,
+          email: authUser?.email || data.email || "",
+          displayName: authUser?.displayName || data.displayName || "",
+          photoURL: authUser?.photoURL || data.photoURL || null,
+          privileges: {
+            tier: data.privileges?.tier || "Basic",
+          },
+          stats: {
+            lastLoginAt: convertTimestamp(data.stats?.lastLoginAt),
+            lastLoginAtRaw: data.stats?.lastLoginAt?._seconds
+              ? data.stats.lastLoginAt._seconds * 1000
+              : null,
+            totalOnlineSeconds: data.stats?.totalOnlineSeconds || 0,
+          },
+          lastLocation: data.lastLocation
+            ? {
+                lat: data.lastLocation.lat,
+                lon: data.lastLocation.lon,
+                city: data.lastLocation.city || null,
+                state: data.lastLocation.state || null,
+                county: data.lastLocation.county || null,
+                updatedAt: convertTimestamp(data.lastLocation.updatedAt),
+              }
+            : null,
+        };
+        
+        // Log user data for debugging
+        console.log("[API /admin/users] User:", user.email, {
+          hasPhoto: !!user.photoURL,
+          hasLocation: !!user.lastLocation,
+          locationData: user.lastLocation ? `${user.lastLocation.city}, ${user.lastLocation.state}` : 'none'
+        });
+        
+        return user;
+      })
+    );
 
     console.log("[API /admin/users] Returning", users.length, "users");
     res.status(200).json(users);
