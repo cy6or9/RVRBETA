@@ -715,6 +715,37 @@ export default function RiverConditions() {
   // Track if we've loaded saved preferences to avoid redundant effects
   const preferencesLoadedRef = useRef(false);
 
+  /* -------------------- HELPER: Find matching station for a dam -------------------- */
+  // When a lock/dam is clicked, find the best matching station
+  // Priority: 1) Name match (L&D stations), 2) Nearest by distance
+  const findStationForDam = (dam) => {
+    // First, try to find a station with a matching name (for L&D stations with gauges)
+    // Normalize names for comparison (remove spaces, punctuation, case-insensitive)
+    const normalizeName = (name) => 
+      name.toLowerCase().replace(/[^a-z0-9]/g, '');
+    
+    const damNameNorm = normalizeName(dam.name);
+    
+    // Look for an exact name match first
+    const nameMatch = stations.find(s => {
+      const stationNameNorm = normalizeName(s.name);
+      return stationNameNorm === damNameNorm || 
+             stationNameNorm.includes(damNameNorm) ||
+             damNameNorm.includes(stationNameNorm);
+    });
+    
+    if (nameMatch) {
+      return nameMatch;
+    }
+    
+    // Fallback: find nearest station by distance
+    return stations.reduce((prev, curr) => {
+      const prevDist = Math.hypot(prev.lat - dam.lat, prev.lon - dam.lon);
+      const currDist = Math.hypot(curr.lat - dam.lat, curr.lon - dam.lon);
+      return currDist < prevDist ? curr : prev;
+    });
+  };
+
   /* -------------------- DATA LOADERS -------------------- */
 
   async function loadRiver(stationOrId, { silent = false } = {}) {
@@ -1551,11 +1582,16 @@ export default function RiverConditions() {
                 </p>
 
                 <p className="text-sm">
-                  {selectedDam 
-                    ? `Lock & Dam at River Mile ${selectedDam.riverMile}`
-                    : (typeof data?.observed === "number" ? `${data.observed.toFixed(2)} ft` : "Loading…")}
-                  {!selectedDam && data?.time ? ` at ${formatLocal(data.time)}` : ""}
+                  {typeof data?.observed === "number" 
+                    ? `${data.observed.toFixed(2)} ft` 
+                    : "Loading…"}
+                  {data?.time ? ` at ${formatLocal(data.time)}` : ""}
                 </p>
+                {selectedDam && (
+                  <p className="text-xs text-white/70 mt-0.5">
+                    Lock & Dam at River Mile {selectedDam.riverMile}
+                  </p>
+                )}
               </div>
             </div>
 
@@ -1674,14 +1710,10 @@ export default function RiverConditions() {
               setWxLoc({ lat: station.lat, lon: station.lon });
               setMapCenter({ lat: station.lat, lon: station.lon });
             } else if (dam) {
-              // Find nearest station to the dam for river data
-              const nearestStation = stations.reduce((prev, curr) => {
-                const prevDist = Math.hypot(prev.lat - dam.lat, prev.lon - dam.lon);
-                const currDist = Math.hypot(curr.lat - dam.lat, curr.lon - dam.lon);
-                return currDist < prevDist ? curr : prev;
-              });
+              // Find best matching station (prioritize name match for L&D gauges)
+              const matchingStation = findStationForDam(dam);
               setSelectedDam(dam);
-              setSelected(nearestStation); // Keep station selected for river data
+              setSelected(matchingStation); // Use matched station for river data
               setWxLoc({ lat: dam.lat, lon: dam.lon });
               setMapCenter({ lat: dam.lat, lon: dam.lon });
             }
@@ -1705,14 +1737,10 @@ export default function RiverConditions() {
               setWxLoc({ lat: station.lat, lon: station.lon });
               setMapCenter({ lat: station.lat, lon: station.lon });
             } else if (dam) {
-              // Find nearest station to the dam for river data
-              const nearestStation = stations.reduce((prev, curr) => {
-                const prevDist = Math.hypot(prev.lat - dam.lat, prev.lon - dam.lon);
-                const currDist = Math.hypot(curr.lat - dam.lat, curr.lon - dam.lon);
-                return currDist < prevDist ? curr : prev;
-              });
+              // Find best matching station (prioritize name match for L&D gauges)
+              const matchingStation = findStationForDam(dam);
               setSelectedDam(dam);
-              setSelected(nearestStation); // Keep station selected for river data
+              setSelected(matchingStation); // Use matched station for river data
               setWxLoc({ lat: dam.lat, lon: dam.lon });
               setMapCenter({ lat: dam.lat, lon: dam.lon });
             }
@@ -1736,14 +1764,10 @@ export default function RiverConditions() {
               setWxLoc({ lat: station.lat, lon: station.lon });
               setMapCenter({ lat: station.lat, lon: station.lon });
             } else if (dam) {
-              // Find nearest station to the dam for river data
-              const nearestStation = stations.reduce((prev, curr) => {
-                const prevDist = Math.hypot(prev.lat - dam.lat, prev.lon - dam.lon);
-                const currDist = Math.hypot(curr.lat - dam.lat, curr.lon - dam.lon);
-                return currDist < prevDist ? curr : prev;
-              });
+              // Find best matching station (prioritize name match for L&D gauges)
+              const matchingStation = findStationForDam(dam);
               setSelectedDam(dam);
-              setSelected(nearestStation); // Keep station selected for river data
+              setSelected(matchingStation); // Use matched station for river data
               setWxLoc({ lat: dam.lat, lon: dam.lon });
               setMapCenter({ lat: dam.lat, lon: dam.lon });
             }
