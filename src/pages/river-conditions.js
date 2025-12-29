@@ -578,6 +578,8 @@ function WindCompass({ direction, degrees }) {
   if (degrees == null || isNaN(degrees)) return null;
 
   const normalizedDeg = ((Number(degrees) % 360) + 360) % 360;
+  // Wind direction is reported as "from", but display arrow pointing "to" (+180°)
+  const arrowDeg = (normalizedDeg + 180) % 360;
 
   return (
     <div className="flex flex-col items-center justify-center">
@@ -588,13 +590,13 @@ function WindCompass({ direction, degrees }) {
         <span className="absolute right-0 top-1/2 -translate-y-1/2">E</span>
         <div
           className="absolute left-1/2 bottom-1/2 w-[2px] h-7 bg-cyan-400 rounded-full origin-bottom -translate-x-1/2"
-          style={{ transform: `rotate(${normalizedDeg}deg)` }}
+          style={{ transform: `rotate(${arrowDeg}deg)` }}
         />
       </div>
       <p className="text-xs mt-1">
         {direction} ({degrees.toFixed(0)}°)
       </p>
-      <p className="text-[10px] opacity-70 -mt-1">Blowing: {normalizedDeg.toFixed(0)}°</p>
+      <p className="text-[10px] opacity-70 -mt-1">Blowing to: {arrowDeg.toFixed(0)}°</p>
     </div>
   );
 }
