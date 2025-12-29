@@ -110,14 +110,8 @@ export function AuthProvider({ children }) {
         loginRecordedRef.current = true;
         sessionStartRef.current = Date.now();
         
-        // Only call setLastLogin if it wasn't already called (e.g., by popup login handler)
-        // Check if the user just logged in (within last 5 seconds)
-        const justLoggedIn = !prevUser || (Date.now() - (sessionStartRef.current || 0)) < 5000;
-        if (!justLoggedIn) {
-          setLastLogin(firebaseUser.uid, firebaseUser.email).catch((error) => {
-            console.error("Error recording login:", error);
-          });
-        }
+        // Login tracking is handled by login.js - no need to duplicate here
+        // This prevents redundant Firestore writes
       }
 
       // Update refs and state
@@ -192,29 +186,31 @@ export function AuthProvider({ children }) {
       console.log("[AuthContext] Saving session before logout");
       const elapsedSeconds = Math.floor((Date.now() - sessionStartRef.current) / 1000);
       if (elapsedSeconds > 5) {
-        // Run in background with timeout - don't block logout
+        // Run in background with longer timeout - don't block logout
         Promise.race([
           Promise.all([
             saveSessionDuration(user.uid, elapsedSeconds),
             setLastLogout(user.uid)
           ]),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 2000))
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
         ]).then(() => {
           console.log("[AuthContext] Session saved successfully");
         }).catch((error) => {
-          console.error("Error saving session on logout:", error);
+          console.error("[AuthContext] Error saving session on logout:", error);
         });
       }
       sessionStartRef.current = null;
       loginRecordedRef.current = false;
     }
     
-    // Sign out and redirect immediately
+    // Clear user state immediately to prevent showing wrong user during logout
+    setUser(null);
+    
+    // Sign out and redirect
     try {
       console.log("[AuthContext] Calling signOut...");
       await signOut(auth);
       console.log("[AuthContext] signOut successful");
-      setUser(null);
       console.log("[AuthContext] Redirecting to:", redirectPath);
       router.push(redirectPath);
     } catch (error) {

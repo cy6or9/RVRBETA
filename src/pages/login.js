@@ -35,24 +35,22 @@ export default function LoginPage() {
       
       const redirect = router.query.redirect;
       
-      // Small delay to ensure auth state is fully settled
-      setTimeout(() => {
-        if (redirect === 'admin') {
-          // User wants to access admin, check if they're admin
-          if (isAdmin) {
-            console.log("[LoginPage] Redirecting to admin");
-            router.replace("/admin");
-          } else {
-            alert("Admin privileges required. Redirecting to homepage.");
-            console.log("[LoginPage] Not admin, redirecting to home");
-            router.replace("/");
-          }
+      // Redirect immediately - no artificial delay needed
+      if (redirect === 'admin') {
+        // User wants to access admin, check if they're admin
+        if (isAdmin) {
+          console.log("[LoginPage] Redirecting to admin");
+          router.replace("/admin");
         } else {
-          // Normal login - redirect to river conditions or home
-          console.log("[LoginPage] Redirecting to river-conditions");
-          router.replace("/river-conditions");
+          alert("Admin privileges required. Redirecting to homepage.");
+          console.log("[LoginPage] Not admin, redirecting to home");
+          router.replace("/");
         }
-      }, 500);
+      } else {
+        // Normal login - redirect to river conditions or home
+        console.log("[LoginPage] Redirecting to river-conditions");
+        router.replace("/river-conditions");
+      }
     }
   }, [loading, user, isAdmin, router, isRedirecting]);
 
@@ -66,22 +64,21 @@ export default function LoginPage() {
       if (result?.user) {
         console.log("[LoginPage] Popup login successful:", result.user.email);
         
-        // Create user profile immediately for popup logins
-        try {
-          console.log("[LoginPage] Creating user profile...");
-          await createUserProfile(result.user.uid, {
-            email: result.user.email,
-            displayName: result.user.displayName,
-            photoURL: result.user.photoURL,
-          });
-          
-          await setLastLogin(result.user.uid, result.user.email);
-          console.log("[LoginPage] User profile created and login recorded");
-        } catch (error) {
-          console.error("[LoginPage] Error setting up user profile:", error);
-          // Don't fail the login if profile creation fails
-        }
+        // Create user profile in background (don't block login)
+        createUserProfile(result.user.uid, {
+          email: result.user.email,
+          displayName: result.user.displayName,
+          photoURL: result.user.photoURL,
+        }).catch((error) => {
+          console.error("[LoginPage] Error creating user profile:", error);
+        });
         
+        // Record login in background (don't block)
+        setLastLogin(result.user.uid, result.user.email).catch((error) => {
+          console.error("[LoginPage] Error recording login:", error);
+        });
+        
+        console.log("[LoginPage] Profile creation initiated in background");
         // User state will be updated by AuthContext
       }
       // If redirect was used, code after this won't run because browser redirects

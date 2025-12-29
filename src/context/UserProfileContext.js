@@ -22,6 +22,7 @@ export function UserProfileProvider({ children }) {
   const { user, loading: authLoading } = useAuth();
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [currentUserId, setCurrentUserId] = useState(null);
 
   // Load user profile when user logs in
   useEffect(() => {
@@ -29,7 +30,14 @@ export function UserProfileProvider({ children }) {
       if (authLoading) return;
 
       if (!user) {
-        // Not logged in - use default profile from localStorage or defaults
+        // Not logged in - clear any cached profiles and use guest profile
+        // Clear all user profile caches to prevent conflicts when switching users
+        Object.keys(localStorage).forEach(key => {
+          if (key.startsWith('userProfile_')) {
+            localStorage.removeItem(key);
+          }
+        });
+        
         const localProfile = localStorage.getItem("guestProfile");
         setProfile(localProfile ? JSON.parse(localProfile) : defaultUserProfile);
         setLoading(false);
@@ -39,26 +47,59 @@ export function UserProfileProvider({ children }) {
       try {
         setLoading(true);
         
-        // Try to load from cache first for faster initial render
-        const cachedProfile = localStorage.getItem(`userProfile_${user.uid}`);
-        if (cachedProfile) {
-          console.log("[UserProfileContext] Using cached profile");
+        // Check if user has changed - if so, invalidate cache
+        const userChanged = currentUserId && currentUserId !== user.uid;
+        if (userChanged) {
+          console.log("[UserProfileContext] User changed, clearing old cache");
+          // Clear old user's cache
+          if (currentUserId) {
+            localStorage.removeItem(`userProfile_${currentUserId}`);
+            localStorage.removeItem(`userProfile_${currentUserId}_timestamp`);
+          }
+        }
+        setCurrentUserId(user.uid);
+        
+        // Check cache first
+        const cacheKey = `userProfile_${user.uid}`;
+        const cacheTimeKey = `userProfile_${user.uid}_timestamp`;
+        const cachedProfile = localStorage.getItem(cacheKey);
+        const cacheTime = localStorage.getItem(cacheTimeKey);
+        
+        // Use cache if less than 5 minutes old AND user hasn't changed
+        const isCacheFresh = cacheTime && (Date.now() - parseInt(cacheTime)) < 5 * 60 * 1000;
+        
+        if (cachedProfile && isCacheFresh && !userChanged) {
+          console.log("[UserProfileContext] Using fresh cached profile, skipping Firestore fetch");
           setProfile(JSON.parse(cachedProfile));
           setLoading(false);
+        } else if (cachedProfile) {
+          // Cache exists but stale - use it immediately and refresh in background
+          console.log("[UserProfileContext] Using stale cache, refreshing in background");
+          setProfile(JSON.parse(cachedProfile));
+          setLoading(false);
+          
+          // Fetch fresh data in background
+          getUserProfile(user.uid).then((userProfile) => {
+            setProfile(userProfile);
+            localStorage.setItem(cacheKey, JSON.stringify(userProfile));
+            localStorage.setItem(cacheTimeKey, Date.now().toString());
+            console.log("[UserProfileContext] Profile refreshed in background");
+          }).catch((error) => {
+            console.error("[UserProfileContext] Background refresh failed:", error);
+          });
+        } else {
+          // No cache - fetch from Firestore
+          console.log("[UserProfileContext] No cache, fetching from Firestore");
+          const userProfile = await getUserProfile(user.uid);
+          setProfile(userProfile);
+          localStorage.setItem(cacheKey, JSON.stringify(userProfile));
+          localStorage.setItem(cacheTimeKey, Date.now().toString());
+          setLoading(false);
+          console.log("[UserProfileContext] Profile loaded and cached");
         }
-        
-        // Then fetch fresh data in background
-        console.log("[UserProfileContext] Fetching fresh profile from Firestore");
-        const userProfile = await getUserProfile(user.uid);
-        setProfile(userProfile);
-        
-        // Update cache
-        localStorage.setItem(`userProfile_${user.uid}`, JSON.stringify(userProfile));
-        console.log("[UserProfileContext] Profile loaded and cached");
       } catch (error) {
         console.error("[UserProfileContext] Error loading profile:", error);
         setProfile(defaultUserProfile);
-      } finally {
         setLoading(false);
       }
     }
