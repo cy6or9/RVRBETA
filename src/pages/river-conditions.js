@@ -1156,8 +1156,15 @@ export default function RiverConditions() {
 
     setLoadingLocation(true);
 
+    // Add timeout to geolocation - don't hang forever
+    const geoTimeout = setTimeout(() => {
+      setLoadingLocation(false);
+      alert("Location request timed out. Please check your browser permissions.");
+    }, 10000); // 10 second timeout
+
     navigator.geolocation.getCurrentPosition(
       async ({ coords }) => {
+        clearTimeout(geoTimeout); // Clear timeout on success
         const userLat = coords.latitude;
         const userLon = coords.longitude;
 
@@ -1199,67 +1206,45 @@ export default function RiverConditions() {
 
         }
 
-        // Reverse geocode to get city and state using server-side API
-
+        // Reverse geocode and fetch river outline in parallel
         let geocodeSuccess = false;
+        let riverCoords = [];
         
         try {
-          const geocodeUrl = `/api/geocode?lat=${userLat}&lon=${userLon}&t=${Date.now()}`;
-
-          const response = await fetch(geocodeUrl, {
-            method: 'GET',
-            cache: 'no-store',
-            headers: {
-              'Cache-Control': 'no-cache, no-store, must-revalidate',
-              'Pragma': 'no-cache',
-              'Expires': '0'
-            }
-          });
+          // Make both API calls in parallel
+          const [geocodeResponse, riverResponse] = await Promise.all([
+            fetch(`/api/geocode?lat=${userLat}&lon=${userLon}&t=${Date.now()}`, {
+              method: 'GET',
+              cache: 'no-store',
+              headers: {
+                'Cache-Control': 'no-cache, no-store, must-revalidate',
+                'Pragma': 'no-cache',
+                'Expires': '0'
+              }
+            }),
+            fetch(`/api/river-outline?t=${Date.now()}`, { cache: 'no-store' })
+          ]);
           
-          // Only treat 2xx as success
-          if (response.ok) {
-            const data = await response.json();
-
+          // Process geocode response
+          if (geocodeResponse.ok) {
+            const data = await geocodeResponse.json();
             if (data && data.success && data.location) {
               setUserCityState(data.location);
-
               geocodeSuccess = true;
               
-              // Save location to user profile if logged in
+              // Save location to user profile if logged in (non-blocking)
               if (user?.uid) {
-                try {
-                  await updateUserLocation(user.uid, {
-                    lat: userLat,
-                    lon: userLon,
-                    city: data.location.city,
-                    state: data.location.state,
-                  });
-                } catch (error) {
-                  console.error("Error saving user location:", error);
-                }
+                updateUserLocation(user.uid, {
+                  lat: userLat,
+                  lon: userLon,
+                  city: data.location.city,
+                  state: data.location.state,
+                }).catch(console.error);
               }
-            } else {
-
             }
-          } else {
-
           }
-        } catch (error) {
-
-        }
-        
-        // If geocoding failed, the server-side API already tried all fallbacks
-        // Just log if we still don't have a location
-        if (!geocodeSuccess && !userCityState) {
-
-        }
-
-        // 🔥 THIS IS THE IMPORTANT PART - Snap to river, then find downstream L&D
-        
-        // First, fetch river outline data to snap user to river
-        let riverCoords = [];
-        try {
-          const riverResponse = await fetch(`/api/river-outline?t=${Date.now()}`, { cache: 'no-store' });
+          
+          // Process river outline response
           if (riverResponse.ok) {
             const riverData = await riverResponse.json();
             if (riverData.success && Array.isArray(riverData.elements)) {
@@ -1270,8 +1255,8 @@ export default function RiverConditions() {
               });
             }
           }
-        } catch (err) {
-          console.error("Error loading river path:", err);
+        } catch (error) {
+          console.error("Error fetching location data:", error);
         }
 
         // Snap user location to nearest point on river
@@ -1343,6 +1328,7 @@ export default function RiverConditions() {
         setLoadingLocation(false);
       },
       (err) => {
+        clearTimeout(geoTimeout); // Clear timeout on error
         setLoadingLocation(false);
 
         let errorMsg = "Unable to get location.";

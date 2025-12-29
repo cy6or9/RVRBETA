@@ -23,9 +23,25 @@ export default async function handler(req, res) {
 
     console.log("[API /admin/users] Attempting to fetch userProfiles collection");
     
-    // Try to get the collection
-    const collectionRef = adminDb.collection("userProfiles");
-    const snapshot = await collectionRef.get();
+    // Try to get the collection with error handling
+    let snapshot;
+    try {
+      const collectionRef = adminDb.collection("userProfiles");
+      console.log("[API /admin/users] Collection reference created");
+      snapshot = await collectionRef.get();
+      console.log("[API /admin/users] Query executed, snapshot size:", snapshot.size);
+    } catch (firestoreError) {
+      console.error("[API /admin/users] Firestore query error:", firestoreError.message);
+      console.error("[API /admin/users] Error code:", firestoreError.code);
+      
+      // If database doesn't exist, return empty array instead of error
+      if (firestoreError.code === 5 || firestoreError.message?.includes('NOT_FOUND')) {
+        console.log("[API /admin/users] Database or collection not found, returning empty array");
+        return res.status(200).json([]);
+      }
+      
+      throw firestoreError;
+    }
     
     console.log("[API /admin/users] Successfully fetched", snapshot.size, "users");
 

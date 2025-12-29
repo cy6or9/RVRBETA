@@ -45,8 +45,6 @@ if (!admin.apps.length) {
         privateKey,
       }),
       storageBucket,
-      // Specify the database ID explicitly
-      databaseURL: `https://${projectId}.firebaseio.com`,
     });
     console.log("[Firebase Admin] Initialized successfully");
   } catch (error) {
@@ -55,13 +53,10 @@ if (!admin.apps.length) {
   }
 }
 
-// Export Firestore instance with explicit database configuration
-const firestoreDatabaseId = process.env.FIRESTORE_DATABASE_ID || '(default)';
-console.log("[Firebase Admin] Using Firestore database:", firestoreDatabaseId);
-
-export const adminDb = firestoreDatabaseId === '(default)' 
-  ? admin.firestore() 
-  : admin.firestore(admin.app(), firestoreDatabaseId);
+// Export Firestore instance
+// Admin SDK automatically uses the correct database for the project
+export const adminDb = admin.firestore();
+console.log("[Firebase Admin] Firestore initialized for project:", projectId);
 
 // Export Storage (for upload API)
 export const storage = storageBucket ? admin.storage().bucket() : null;
