@@ -103,7 +103,13 @@ export async function createUserProfile(userId, initialData = {}) {
     
     if (existingDoc.exists()) {
       // Profile exists - only update the fields that are provided
-      console.log("[userProfile] Profile exists, updating with:", Object.keys(initialData));
+      console.log("[userProfile] Profile exists for user:", userId);
+      console.log("[userProfile] Updating with fields:", Object.keys(initialData));
+      console.log("[userProfile] Update data:", { 
+        ...initialData, 
+        photoURL: initialData.photoURL ? 'present' : 'null' 
+      });
+      
       const updates = {
         ...initialData,
         updatedAt: serverTimestamp(),
@@ -118,10 +124,11 @@ export async function createUserProfile(userId, initialData = {}) {
       }
       
       await updateDoc(userRef, updates);
+      console.log("[userProfile] Profile updated successfully");
       return { ...existingDoc.data(), ...updates };
     } else {
       // New profile - create with defaults
-      console.log("[userProfile] Creating new profile for:", initialData.email);
+      console.log("[userProfile] Creating NEW profile for:", initialData.email);
       const profile = {
         ...defaultUserProfile,
         ...initialData,
@@ -134,6 +141,7 @@ export async function createUserProfile(userId, initialData = {}) {
       };
 
       await setDoc(userRef, profile);
+      console.log("[userProfile] New profile created successfully");
       return profile;
     }
   } catch (error) {
@@ -345,13 +353,10 @@ export async function setLastLogin(userId, email, displayName = '', photoURL = n
   try {
     const userRef = doc(db, "userProfiles", userId);
     
-    // Use setDoc with merge: true to safely create or update
-    // This avoids the "Failed to get document because client is offline" error
+    // Use setDoc with merge: true and dot notation to preserve nested fields
     const updates = {
       uid: userId,
-      stats: {
-        lastLoginAt: serverTimestamp(),
-      },
+      "stats.lastLoginAt": serverTimestamp(),
       updatedAt: serverTimestamp(),
     };
     
@@ -360,12 +365,20 @@ export async function setLastLogin(userId, email, displayName = '', photoURL = n
     if (displayName) updates.displayName = displayName;
     if (photoURL) updates.photoURL = photoURL;
     
-    console.log("[userProfile] setLastLogin updating:", { email, displayName, hasPhoto: !!photoURL });
+    console.log("[userProfile] setLastLogin updating:", { 
+      userId, 
+      email, 
+      displayName, 
+      hasPhoto: !!photoURL,
+      updates 
+    });
     
     await setDoc(userRef, updates, { merge: true });
+    console.log("[userProfile] setLastLogin complete");
     
   } catch (error) {
-    console.error("Error setting last login:", error);
+    console.error("[userProfile] Error setting last login:", error);
+    throw error; // Re-throw so we can see it in the console
   }
 }
 

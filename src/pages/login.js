@@ -63,27 +63,33 @@ export default function LoginPage() {
       // If popup succeeded, result will be returned
       if (result?.user) {
         console.log("[LoginPage] Popup login successful:", result.user.email);
-        
-        // Create user profile in background (don't block login)
-        createUserProfile(result.user.uid, {
+        console.log("[LoginPage] User data:", {
           email: result.user.email,
           displayName: result.user.displayName,
-          photoURL: result.user.photoURL,
-        }).catch((error) => {
-          console.error("[LoginPage] Error creating user profile:", error);
+          photoURL: result.user.photoURL
         });
         
-        // Record login in background (don't block)
-        setLastLogin(
-          result.user.uid, 
-          result.user.email,
-          result.user.displayName || '',
-          result.user.photoURL
-        ).catch((error) => {
-          console.error("[LoginPage] Error recording login:", error);
-        });
+        // Update profile with current login data - WAIT for completion
+        try {
+          console.log("[LoginPage] Updating profile...");
+          await Promise.all([
+            createUserProfile(result.user.uid, {
+              email: result.user.email,
+              displayName: result.user.displayName,
+              photoURL: result.user.photoURL,
+            }),
+            setLastLogin(
+              result.user.uid, 
+              result.user.email,
+              result.user.displayName || '',
+              result.user.photoURL
+            )
+          ]);
+          console.log("[LoginPage] Profile updated successfully");
+        } catch (error) {
+          console.error("[LoginPage] Error updating profile:", error);
+        }
         
-        console.log("[LoginPage] Profile creation initiated in background");
         // User state will be updated by AuthContext
       }
       // If redirect was used, code after this won't run because browser redirects
