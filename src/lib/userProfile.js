@@ -353,10 +353,24 @@ export async function setLastLogin(userId, email, displayName = '', photoURL = n
   try {
     const userRef = doc(db, "userProfiles", userId);
     
-    // Use setDoc with merge: true and dot notation to preserve nested fields
+    // First, get existing stats to preserve totalOnlineSeconds
+    let existingStats = {};
+    try {
+      const docSnap = await getDoc(userRef);
+      if (docSnap.exists()) {
+        existingStats = docSnap.data().stats || {};
+      }
+    } catch (err) {
+      console.log("[userProfile] Could not fetch existing stats, creating new");
+    }
+    
+    // Build update object with proper nested structure
     const updates = {
       uid: userId,
-      "stats.lastLoginAt": serverTimestamp(),
+      stats: {
+        ...existingStats,
+        lastLoginAt: serverTimestamp(),
+      },
       updatedAt: serverTimestamp(),
     };
     
@@ -370,7 +384,6 @@ export async function setLastLogin(userId, email, displayName = '', photoURL = n
       email, 
       displayName, 
       hasPhoto: !!photoURL,
-      updates 
     });
     
     await setDoc(userRef, updates, { merge: true });
@@ -392,9 +405,22 @@ export async function setLastLogout(userId) {
 
   try {
     const userRef = doc(db, "userProfiles", userId);
+    
+    // Get existing stats to preserve other fields
+    let existingStats = {};
+    try {
+      const docSnap = await getDoc(userRef);
+      if (docSnap.exists()) {
+        existingStats = docSnap.data().stats || {};
+      }
+    } catch (err) {
+      console.log("[userProfile] Could not fetch existing stats for logout");
+    }
+    
     // Use setDoc with merge to safely update without checking existence
     await setDoc(userRef, {
       stats: {
+        ...existingStats,
         lastLogoutAt: serverTimestamp(),
       },
       updatedAt: serverTimestamp(),
@@ -416,9 +442,22 @@ export async function saveSessionDuration(userId, elapsedSeconds) {
 
   try {
     const userRef = doc(db, "userProfiles", userId);
+    
+    // Get existing stats to preserve lastLoginAt and other fields
+    let existingStats = {};
+    try {
+      const docSnap = await getDoc(userRef);
+      if (docSnap.exists()) {
+        existingStats = docSnap.data().stats || {};
+      }
+    } catch (err) {
+      console.log("[userProfile] Could not fetch existing stats for session save");
+    }
+    
     // Use setDoc with merge to safely update
     await setDoc(userRef, {
       stats: {
+        ...existingStats,
         totalOnlineSeconds: increment(elapsedSeconds),
       },
       updatedAt: serverTimestamp(),
@@ -442,15 +481,25 @@ export async function updateUserLocation(userId, location) {
   if (!location?.lat || !location?.lon) return;
 
   try {
+    console.log("[userProfile] Updating user location:", {
+      userId,
+      city: location.city,
+      state: location.state,
+      county: location.county,
+    });
+    
     await updateUserProfile(userId, {
       lastLocation: {
         lat: location.lat,
         lon: location.lon,
         city: location.city || null,
         state: location.state || null,
+        county: location.county || null,
         updatedAt: serverTimestamp(),
       },
     });
+    
+    console.log("[userProfile] Location updated successfully");
   } catch (error) {
     console.error("Error updating user location:", error);
   }

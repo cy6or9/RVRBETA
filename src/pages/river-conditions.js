@@ -1229,7 +1229,8 @@ export default function RiverConditions() {
           if (geocodeResponse.ok) {
             const data = await geocodeResponse.json();
             if (data && data.success && data.location) {
-              setUserCityState(data.location);
+              // Use formatted location string for display
+              setUserCityState(data.location.formatted || data.location);
               geocodeSuccess = true;
               
               // Save location to user profile if logged in (non-blocking)
@@ -1237,8 +1238,9 @@ export default function RiverConditions() {
                 updateUserLocation(user.uid, {
                   lat: userLat,
                   lon: userLon,
-                  city: data.location.city,
-                  state: data.location.state,
+                  city: data.location.city || null,
+                  state: data.location.state || null,
+                  county: data.location.county || null,
                 }).catch(console.error);
               }
             }
@@ -1311,7 +1313,7 @@ export default function RiverConditions() {
                     const locationCache = {
                       lat: userLat,
                       lon: userLon,
-                      cityState: data.location,
+                      cityState: data.location.formatted || data.location,
                       findMeInfo: info,
                       timestamp: Date.now()
                     };

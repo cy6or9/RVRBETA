@@ -263,12 +263,14 @@ export default async function handler(req, res) {
 
     return res.status(200).json({
       success: true,
-      location: locationStr,
+      location: {
+        formatted: locationStr,
+        city: city || null,
+        county: county || null,
+        state: stateAbbrev || null,
+        name: place_name || null,
+      },
       raw: data.address,
-      city,
-      county,
-      state,
-      name: place_name,
     });
   } catch (error) {
 
