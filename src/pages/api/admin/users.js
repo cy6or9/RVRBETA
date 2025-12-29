@@ -23,6 +23,14 @@ export default async function handler(req, res) {
 
     console.log("[API /admin/users] Attempting to fetch userProfiles collection");
     
+    // Try to list all collections first to debug
+    try {
+      const collections = await adminDb.listCollections();
+      console.log("[API /admin/users] Available collections:", collections.map(c => c.id));
+    } catch (listError) {
+      console.log("[API /admin/users] Could not list collections:", listError.message);
+    }
+    
     // Try to get the collection with error handling
     let snapshot;
     try {
@@ -30,9 +38,11 @@ export default async function handler(req, res) {
       console.log("[API /admin/users] Collection reference created");
       snapshot = await collectionRef.get();
       console.log("[API /admin/users] Query executed, snapshot size:", snapshot.size);
+      console.log("[API /admin/users] Snapshot empty?", snapshot.empty);
     } catch (firestoreError) {
       console.error("[API /admin/users] Firestore query error:", firestoreError.message);
       console.error("[API /admin/users] Error code:", firestoreError.code);
+      console.error("[API /admin/users] Full error:", JSON.stringify(firestoreError, null, 2));
       
       // If database doesn't exist, return empty array instead of error
       if (firestoreError.code === 5 || firestoreError.message?.includes('NOT_FOUND')) {

@@ -3,6 +3,7 @@
 
 import { createContext, useContext, useEffect, useState, useCallback } from "react";
 import { useAuth } from "./AuthContext";
+import RiverLoadingAnimation from "@/components/RiverLoadingAnimation";
 import {
   getUserProfile,
   updateUserProfile,
@@ -332,11 +333,7 @@ export function UserProfileProvider({ children }) {
   };
 
   if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center text-muted-foreground">
-        Loading profile...
-      </div>
-    );
+    return <RiverLoadingAnimation userName={user?.displayName || user?.email?.split('@')[0]} />;
   }
 
   return (

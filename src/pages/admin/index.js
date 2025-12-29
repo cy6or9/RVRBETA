@@ -2,9 +2,11 @@
 // Admin User Privileges Dashboard
 // Displays all users with their subscription tier, login stats, and location data
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useRouter } from "next/router";
 import { useQuery } from "@tanstack/react-query";
+import { collection, getDocs } from "firebase/firestore";
+import { firestore } from "@/lib/firebase";
 
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -36,15 +38,81 @@ export default function AdminUserPrivilegesPage() {
   } = useQuery({
     queryKey: ["/api/admin/users"],
     queryFn: async () => {
-      const response = await fetch("/api/admin/users");
-      if (!response.ok) {
-        throw new Error("Failed to fetch users");
+      try {
+        // Try server-side API first
+        const response = await fetch("/api/admin/users");
+        if (response.ok) {
+          const data = await response.json();
+          // If we got data, return it
+          if (data && data.length > 0) {
+            return data;
+          }
+        }
+      } catch (err) {
+        console.log("[Admin] Server API failed, using client SDK:", err);
       }
-      return response.json();
+      
+      // Fallback to client SDK if server fails or returns empty
+      console.log("[Admin] Using client SDK to fetch users");
+      const usersRef = collection(firestore, "userProfiles");
+      const snapshot = await getDocs(usersRef);
+      
+      const users = snapshot.docs.map((doc) => {
+        const data = doc.data();
+        
+        // Convert Firestore Timestamps to ISO strings
+        const convertTimestamp = (timestamp) => {
+          if (!timestamp) return null;
+          try {
+            if (timestamp.toDate) {
+              return timestamp.toDate().toISOString();
+            }
+            if (timestamp instanceof Date) {
+              return timestamp.toISOString();
+            }
+            if (timestamp.seconds) {
+              return new Date(timestamp.seconds * 1000).toISOString();
+            }
+          } catch (error) {
+            console.error("Error converting timestamp:", error);
+          }
+          return null;
+        };
+
+        return {
+          uid: doc.id,
+          email: data.email || "",
+          displayName: data.displayName || "",
+          photoURL: data.photoURL || null,
+          privileges: {
+            tier: data.privileges?.tier || "Basic",
+          },
+          stats: {
+            lastLoginAt: convertTimestamp(data.stats?.lastLoginAt),
+            lastLoginAtRaw: data.stats?.lastLoginAt?.seconds
+              ? data.stats.lastLoginAt.seconds * 1000
+              : null,
+            totalOnlineSeconds: data.stats?.totalOnlineSeconds || 0,
+          },
+          lastLocation: data.lastLocation
+            ? {
+                lat: data.lastLocation.lat,
+                lon: data.lastLocation.lon,
+                city: data.lastLocation.city || null,
+                state: data.lastLocation.state || null,
+                county: data.lastLocation.county || null,
+                updatedAt: convertTimestamp(data.lastLocation.updatedAt),
+              }
+            : null,
+        };
+      });
+      
+      console.log("[Admin] Fetched", users.length, "users from client SDK");
+      return users;
     },
-    retry: false, // Don't retry on failure to prevent infinite loops
-    refetchOnWindowFocus: false, // Don't refetch when window gains focus
-    staleTime: 5 * 60 * 1000, // Consider data fresh for 5 minutes
+    retry: 1,
+    refetchOnWindowFocus: false,
+    staleTime: 5 * 60 * 1000,
   });
 
   // Format time spent online
@@ -274,53 +342,78 @@ export default function AdminUserPrivilegesPage() {
                   key={user.uid}
                   className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 p-4 rounded-lg border bg-card hover:bg-muted/50 transition-colors"
                 >
-                  {/* User Info */}
-                  <div className="space-y-2 flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <h3 className="font-semibold truncate">{user.email}</h3>
-                      <Badge variant={getTierBadgeVariant(user.privileges?.tier)}>
-                        {user.privileges?.tier || "Basic"}
-                      </Badge>
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
-                      {/* Last Login */}
-                      <div className="flex items-center gap-2 text-muted-foreground">
-                        <Clock className="w-4 h-4 flex-shrink-0" />
-                        <span className="truncate">
-                          {formatLastLogin(user.stats?.lastLoginAt)}
-                        </span>
-                      </div>
-
-                      {/* Location */}
-                      {user.lastLocation ? (
-                        <div className="flex items-center gap-2 text-muted-foreground">
-                          <MapPin className="w-4 h-4 flex-shrink-0" />
-                          <span className="truncate">
-                            {user.lastLocation.city && user.lastLocation.state
-                              ? `${user.lastLocation.city}, ${user.lastLocation.state}`
-                              : `${user.lastLocation.lat.toFixed(4)}, ${user.lastLocation.lon.toFixed(4)}`}
-                          </span>
-                        </div>
+                  {/* Left: Profile Picture + User Info */}
+                  <div className="flex items-start gap-4 flex-1 min-w-0">
+                    {/* Profile Picture */}
+                    <div className="flex-shrink-0">
+                      {user.photoURL ? (
+                        <img
+                          src={user.photoURL}
+                          alt={user.displayName || user.email}
+                          className="w-12 h-12 rounded-full object-cover ring-2 ring-offset-2 ring-muted"
+                          referrerPolicy="no-referrer"
+                        />
                       ) : (
-                        <div className="flex items-center gap-2 text-muted-foreground">
-                          <MapPin className="w-4 h-4 flex-shrink-0" />
-                          <span className="italic">No location</span>
+                        <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center ring-2 ring-offset-2 ring-muted">
+                          <Users className="w-6 h-6 text-muted-foreground" />
                         </div>
                       )}
                     </div>
 
-                    {/* Coordinates (if location exists) */}
-                    {user.lastLocation && (
-                      <p className="text-xs text-muted-foreground">
-                        Coordinates: {user.lastLocation.lat.toFixed(6)},{" "}
-                        {user.lastLocation.lon.toFixed(6)}
-                      </p>
-                    )}
+                    {/* User Info */}
+                    <div className="space-y-2 flex-1 min-w-0">
+                      {/* Email and Badge */}
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <div className="flex flex-col">
+                          {user.displayName && (
+                            <h3 className="font-semibold text-base truncate">
+                              {user.displayName}
+                            </h3>
+                          )}
+                          <p className="text-sm text-muted-foreground truncate">
+                            {user.email}
+                          </p>
+                        </div>
+                        <Badge variant={getTierBadgeVariant(user.privileges?.tier)}>
+                          {user.privileges?.tier || "Basic"}
+                        </Badge>
+                      </div>
+
+                      {/* Last Login */}
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <Clock className="w-4 h-4 flex-shrink-0" />
+                        <span>
+                          Last login: {formatLastLogin(user.stats?.lastLoginAt)}
+                        </span>
+                      </div>
+
+                      {/* Location Info */}
+                      {user.lastLocation ? (
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2 text-sm">
+                            <MapPin className="w-4 h-4 flex-shrink-0 text-muted-foreground" />
+                            <span className="font-medium">
+                              {user.lastLocation.city && user.lastLocation.state
+                                ? `${user.lastLocation.city}, ${user.lastLocation.state}`
+                                : "Unknown Location"}
+                              {user.lastLocation.county && ` (${user.lastLocation.county} County)`}
+                            </span>
+                          </div>
+                          <p className="text-xs text-muted-foreground pl-6">
+                            Coordinates: {user.lastLocation.lat.toFixed(6)}, {user.lastLocation.lon.toFixed(6)}
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                          <MapPin className="w-4 h-4 flex-shrink-0" />
+                          <span className="italic">No location tracked</span>
+                        </div>
+                      )}
+                    </div>
                   </div>
 
-                  {/* Stats */}
-                  <div className="flex flex-row lg:flex-col gap-4 lg:gap-2 lg:items-end lg:text-right">
+                  {/* Right: Stats */}
+                  <div className="flex flex-row lg:flex-col gap-4 lg:gap-2 lg:items-end lg:text-right lg:min-w-[120px]">
                     <div>
                       <p className="text-xs text-muted-foreground uppercase tracking-wide">
                         Time Online

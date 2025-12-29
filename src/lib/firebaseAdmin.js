@@ -38,14 +38,20 @@ console.log("[Firebase Admin] Config check:", {
 // Initialize Firebase Admin SDK
 if (!admin.apps.length) {
   try {
-    admin.initializeApp({
+    const config = {
       credential: admin.credential.cert({
         projectId,
         clientEmail,
         privateKey,
       }),
-      storageBucket,
-    });
+    };
+    
+    // Add storage bucket if available
+    if (storageBucket) {
+      config.storageBucket = storageBucket;
+    }
+    
+    admin.initializeApp(config);
     console.log("[Firebase Admin] Initialized successfully");
   } catch (error) {
     console.error("[Firebase Admin] Initialization failed:", error);
@@ -54,9 +60,22 @@ if (!admin.apps.length) {
 }
 
 // Export Firestore instance
-// Admin SDK automatically uses the correct database for the project
-export const adminDb = admin.firestore();
-console.log("[Firebase Admin] Firestore initialized for project:", projectId);
+// Try to get settings to verify connection
+let db;
+try {
+  db = admin.firestore();
+  // Set longer timeout and enable ignoreUndefinedProperties
+  db.settings({
+    ignoreUndefinedProperties: true,
+  });
+  console.log("[Firebase Admin] Firestore initialized for project:", projectId);
+} catch (error) {
+  console.error("[Firebase Admin] Firestore initialization error:", error);
+  // Create a dummy db object that will fail gracefully
+  db = null;
+}
+
+export const adminDb = db;
 
 // Export Storage (for upload API)
 export const storage = storageBucket ? admin.storage().bucket() : null;
