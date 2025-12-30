@@ -1,0 +1,635 @@
+// src/components/DeviceCompass.tsx
+import * as React from "react";
+import { cn } from "@/lib/utils";
+
+interface DeviceCompassProps {
+  /** Wind direction in meteorological degrees (0 = from North, 90 = from East) */
+  windDirectionDeg?: number | null;
+  /** Optional wind speed to show, in mph */
+  windSpeedMph?: number | null;
+  /** Size of the compass in pixels */
+  size?: number;
+  /** Show permission request UI */
+  onRequestPermission?: () => void;
+}
+
+type SpeedUnit = 'mph' | 'knots' | 'kmh';
+
+// 16-point compass with detailed directions
+const DIRECTIONS = [
+  { label: "N", angle: 0 },
+  { label: "NNE", angle: 22.5 },
+  { label: "NE", angle: 45 },
+  { label: "ENE", angle: 67.5 },
+  { label: "E", angle: 90 },
+  { label: "ESE", angle: 112.5 },
+  { label: "SE", angle: 135 },
+  { label: "SSE", angle: 157.5 },
+  { label: "S", angle: 180 },
+  { label: "SSW", angle: 202.5 },
+  { label: "SW", angle: 225 },
+  { label: "WSW", angle: 247.5 },
+  { label: "W", angle: 270 },
+  { label: "WNW", angle: 292.5 },
+  { label: "NW", angle: 315 },
+  { label: "NNW", angle: 337.5 },
+];
+
+// Speed conversion functions
+const convertSpeed = {
+  mphToKnots: (mph: number) => mph * 0.868976,
+  mphToKmh: (mph: number) => mph * 1.60934,
+  mpsToMph: (mps: number) => mps * 2.23694,
+};
+
+/**
+ * Device-orientation compass that rotates with user movement.
+ * Shows both device heading and wind direction (cyan arrow).
+ * Falls back to GPS bearing if no orientation sensors available.
+ */
+export function DeviceCompass({ 
+  windDirectionDeg, 
+  windSpeedMph,
+  size = 160,
+  onRequestPermission
+}: DeviceCompassProps) {
+  const [heading, setHeading] = React.useState<number | null>(null);
+  const [rotationHeading, setRotationHeading] = React.useState<number>(0); // Unnormalized for smooth rotation
+  const [permissionState, setPermissionState] = React.useState<'granted' | 'denied' | 'prompt' | 'checking'>('checking');
+  const [isCalibrating, setIsCalibrating] = React.useState(false);
+  const [userSpeed, setUserSpeed] = React.useState<number>(0); // in mph
+  const [speedUnit, setSpeedUnit] = React.useState<SpeedUnit>('mph');
+  const [useGpsFallback, setUseGpsFallback] = React.useState(false);
+  const [showPermissionPrompt, setShowPermissionPrompt] = React.useState(false);
+  const [permissionsGranted, setPermissionsGranted] = React.useState(false); // Trigger to re-setup after permission grant
+  
+  const animationFrameRef = React.useRef<number | undefined>(undefined);
+  const smoothedHeadingRef = React.useRef<number>(0);
+  const gpsWatchIdRef = React.useRef<number | null>(null);
+  const lastPositionRef = React.useRef<{ lat: number; lon: number; time: number } | null>(null);
+  const lastGpsHeadingRef = React.useRef<number | null>(null);
+  
+  // 90-degree offset for sensor accuracy
+  const HEADING_OFFSET = -90;
+
+  // Smooth heading changes to prevent jitter
+  const smoothHeading = (newHeading: number) => {
+    const current = smoothedHeadingRef.current;
+    let diff = newHeading - current;
+    
+    // Handle wrapping - take shortest angular path
+    while (diff > 180) diff -= 360;
+    while (diff < -180) diff += 360;
+    
+    // Apply smoothing (exponential moving average)
+    const smoothed = current + diff * 0.15;
+    // Don't normalize with modulo - let it go beyond 0-360 for smooth rotation
+    smoothedHeadingRef.current = smoothed;
+    
+    // Return normalized value for display
+    const normalized = (smoothed + 360) % 360;
+    
+    // Update both the display heading and rotation heading
+    setRotationHeading(smoothed); // Raw value for continuous rotation
+    
+    return normalized;
+  };
+
+  // Calculate bearing between two GPS coordinates
+  const calculateBearing = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
+    const φ1 = (lat1 * Math.PI) / 180;
+    const φ2 = (lat2 * Math.PI) / 180;
+    const Δλ = ((lon2 - lon1) * Math.PI) / 180;
+
+    const y = Math.sin(Δλ) * Math.cos(φ2);
+    const x = Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
+    const θ = Math.atan2(y, x);
+    
+    // Convert to degrees and normalize to 0-360
+    const bearing = ((θ * 180) / Math.PI + 360) % 360;
+    return bearing;
+  };
+
+  // Calculate distance between two GPS coordinates (in meters)
+  const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
+    const R = 6371e3; // Earth radius in meters
+    const φ1 = (lat1 * Math.PI) / 180;
+    const φ2 = (lat2 * Math.PI) / 180;
+    const Δφ = ((lat2 - lat1) * Math.PI) / 180;
+    const Δλ = ((lon2 - lon1) * Math.PI) / 180;
+
+    const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+              Math.cos(φ1) * Math.cos(φ2) *
+              Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+    return R * c;
+  };
+
+  // GPS fallback for heading and speed
+  const setupGpsTracking = () => {
+    if (!('geolocation' in navigator)) {
+      return;
+    }
+
+    gpsWatchIdRef.current = navigator.geolocation.watchPosition(
+      (position) => {
+        const { latitude, longitude, speed: gpsSpeed, accuracy } = position.coords;
+        const currentTime = Date.now();
+        
+        // Skip updates with poor accuracy (> 50 meters)
+        if (accuracy && accuracy > 50) {
+          return;
+        }
+
+        // Calculate speed from GPS (in m/s, convert to mph)
+        // Only use GPS speed if moving significantly (> 2 m/s = ~4.5 mph)
+        if (gpsSpeed !== null && gpsSpeed > 2) {
+          const speedMph = convertSpeed.mpsToMph(gpsSpeed);
+          setUserSpeed(Math.round(speedMph * 10) / 10); // Round to 1 decimal
+        } else {
+          setUserSpeed(0); // Stop showing speed when not moving fast enough
+        }
+
+        // Calculate bearing from movement if we have a previous position
+        if (lastPositionRef.current) {
+          const prev = lastPositionRef.current;
+          const timeDiff = (currentTime - prev.time) / 1000; // seconds
+          
+          if (timeDiff > 1.0) { // Update every 1 second for better accuracy
+            const distance = calculateDistance(prev.lat, prev.lon, latitude, longitude);
+            
+            // Only calculate bearing if moved significantly (> 10 meters)
+            if (distance > 10) {
+              const bearing = calculateBearing(prev.lat, prev.lon, latitude, longitude);
+              lastGpsHeadingRef.current = bearing; // Store for blending with sensors
+              const smoothed = smoothHeading(bearing);
+              setHeading(smoothed);
+              
+              // Calculate speed from position change if GPS speed unavailable
+              if (gpsSpeed === null || gpsSpeed < 2) {
+                const speedMps = distance / timeDiff;
+                const speedMph = convertSpeed.mpsToMph(speedMps);
+                if (speedMph > 2) { // Only show speed if > 2 mph
+                  setUserSpeed(Math.round(speedMph * 10) / 10);
+                } else {
+                  setUserSpeed(0);
+                }
+              }
+              
+              lastPositionRef.current = { lat: latitude, lon: longitude, time: currentTime };
+            }
+          }
+        } else {
+          lastPositionRef.current = { lat: latitude, lon: longitude, time: currentTime };
+        }
+      },
+      (error) => {
+        console.error('GPS error:', error);
+      },
+      {
+        enableHighAccuracy: true,
+        maximumAge: 0,
+        timeout: 5000,
+      }
+    );
+  };
+
+  // Check for sensor support and request permission
+  React.useEffect(() => {
+    let handler: ((e: DeviceOrientationEvent) => void) | null = null;
+    let motionHandler: ((e: DeviceMotionEvent) => void) | null = null;
+
+    const setupOrientationListeners = () => {
+      handler = (event: DeviceOrientationEvent) => {
+        let compassHeading: number | null = null;
+
+        // Use webkitCompassHeading (iOS Safari) if available
+        // This gives true north heading (0-360) directly
+        if ((event as any).webkitCompassHeading !== undefined) {
+          // iOS webkitCompassHeading is already calibrated to true north
+          // Just apply our offset correction
+          compassHeading = ((event as any).webkitCompassHeading + HEADING_OFFSET + 360) % 360;
+        } 
+        // Use alpha for Android/others with compass
+        else if (event.alpha !== null && event.absolute) {
+          // Android alpha: 0 = North, increases clockwise
+          // Apply offset correction
+          compassHeading = (360 - event.alpha + HEADING_OFFSET + 360) % 360;
+        }
+        // Fallback to alpha even without absolute flag
+        else if (event.alpha !== null) {
+          // Relative orientation - less accurate but better than nothing
+          compassHeading = (360 - event.alpha + HEADING_OFFSET + 360) % 360;
+        }
+
+        if (compassHeading !== null) {
+          setIsCalibrating(false);
+          const smoothed = smoothHeading(compassHeading);
+          
+          if (animationFrameRef.current) {
+            cancelAnimationFrame(animationFrameRef.current);
+          }
+          
+          animationFrameRef.current = requestAnimationFrame(() => {
+            setHeading(smoothed);
+          });
+        } else {
+          setIsCalibrating(true);
+        }
+      };
+
+      motionHandler = (event: DeviceMotionEvent) => {
+        // Motion handler for future speed calculation improvements
+      };
+
+      window.addEventListener('deviceorientation', handler as any, true);
+      window.addEventListener('devicemotion', motionHandler as any, true);
+    };
+
+    const setupOrientation = async () => {
+      // Check if DeviceOrientation API is supported
+      if (!('DeviceOrientationEvent' in window)) {
+        console.log('[Compass] DeviceOrientation not supported, using GPS fallback');
+        setPermissionState('granted');
+        setUseGpsFallback(true);
+        setupGpsTracking();
+        return;
+      }
+
+      // Check if permission is needed (iOS 13+ or other browsers that require it)
+      const needsPermission = typeof (DeviceOrientationEvent as any).requestPermission === 'function' ||
+                              typeof (DeviceMotionEvent as any).requestPermission === 'function';
+
+      if (needsPermission && !permissionsGranted) {
+        setShowPermissionPrompt(true);
+        setPermissionState('prompt');
+        return;
+      }
+
+      // If permissions were just granted, set up listeners
+      if (needsPermission && permissionsGranted) {
+        console.log('[Compass] Permissions granted, setting up listeners');
+        setPermissionState('granted');
+        setupOrientationListeners();
+        return;
+      }
+
+      // For browsers that don't need permission, test if sensors work
+      const testOrientationWorks = new Promise<boolean>((resolve) => {
+        const timeout = setTimeout(() => resolve(false), 2000);
+        const testHandler = (e: DeviceOrientationEvent) => {
+          if (e.alpha !== null || (e as any).webkitCompassHeading !== undefined) {
+            clearTimeout(timeout);
+            window.removeEventListener('deviceorientation', testHandler as any);
+            resolve(true);
+          }
+        };
+        window.addEventListener('deviceorientation', testHandler as any);
+      });
+
+      const sensorWorks = await testOrientationWorks;
+      
+      if (!sensorWorks) {
+        console.log('[Compass] Orientation sensors not responding, using GPS fallback');
+        setPermissionState('granted');
+        setUseGpsFallback(true);
+        setupGpsTracking();
+        return;
+      }
+
+      // Sensors work, set up listener
+      setPermissionState('granted');
+      setupOrientationListeners();
+    };
+
+    setupOrientation();
+
+    return () => {
+      if (handler) {
+        window.removeEventListener('deviceorientation', handler as any, true);
+      }
+      if (motionHandler) {
+        window.removeEventListener('devicemotion', motionHandler as any, true);
+      }
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+      if (gpsWatchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(gpsWatchIdRef.current);
+      }
+    };
+  }, [permissionsGranted]);
+
+  const handleRequestPermission = async () => {
+    console.log('[Compass] Permission request started');
+    let orientationGranted = false;
+    let motionGranted = false;
+
+    // Request DeviceOrientation permission
+    if (typeof (DeviceOrientationEvent as any).requestPermission === 'function') {
+      try {
+        console.log('[Compass] Requesting DeviceOrientation permission…');
+        const permission = await (DeviceOrientationEvent as any).requestPermission();
+        console.log('[Compass] DeviceOrientation permission result:', permission);
+        orientationGranted = permission === 'granted';
+      } catch (error) {
+        console.error('Error requesting orientation permission:', error);
+      }
+    }
+
+    // Request DeviceMotion permission
+    if (typeof (DeviceMotionEvent as any).requestPermission === 'function') {
+      try {
+        console.log('[Compass] Requesting DeviceMotion permission…');
+        const permission = await (DeviceMotionEvent as any).requestPermission();
+        console.log('[Compass] DeviceMotion permission result:', permission);
+        motionGranted = permission === 'granted';
+      } catch (error) {
+        console.error('Error requesting motion permission:', error);
+      }
+    }
+
+    if (orientationGranted || motionGranted) {
+      console.log('[Compass] Permissions granted, triggering listener setup…');
+      setShowPermissionPrompt(false);
+      setUseGpsFallback(false);
+      // Trigger the useEffect with permissionsGranted flag
+      setPermissionsGranted(true);
+    } else {
+      console.log('[Compass] Permission denied, falling back to GPS');
+      setPermissionState('denied');
+      // Fall back to GPS
+      setUseGpsFallback(true);
+      setupGpsTracking();
+    }
+    
+    if (onRequestPermission) {
+      onRequestPermission();
+    }
+  };
+
+  // Format speed display
+  const getSpeedDisplay = () => {
+    if (userSpeed === 0) return { value: '0.0', unit: speedUnit };
+    
+    let value: number;
+    switch (speedUnit) {
+      case 'knots':
+        value = convertSpeed.mphToKnots(userSpeed);
+        break;
+      case 'kmh':
+        value = convertSpeed.mphToKmh(userSpeed);
+        break;
+      default:
+        value = userSpeed;
+    }
+    
+    return { value: value.toFixed(1), unit: speedUnit };
+  };
+
+  const cycleSpeedUnit = () => {
+    const units: SpeedUnit[] = ['mph', 'knots', 'kmh'];
+    const currentIndex = units.indexOf(speedUnit);
+    const nextIndex = (currentIndex + 1) % units.length;
+    setSpeedUnit(units[nextIndex]);
+  };
+
+  // Calculate wind direction relative to device heading
+  const hasWind = windDirectionDeg != null && !Number.isNaN(windDirectionDeg);
+  const hasHeading = heading !== null;
+  
+  // Wind arrow points TO where wind is going (opposite of FROM direction)
+  const windToDirection = hasWind ? (windDirectionDeg! + 180) % 360 : 0;
+  
+  // Wind arrow rotation relative to compass (which rotates with device)
+  // Use rotationHeading for smooth continuous rotation
+  const windArrowRotation = hasWind && hasHeading 
+    ? windToDirection - rotationHeading
+    : hasWind 
+      ? windToDirection 
+      : 0;
+
+  const radius = size / 2;
+  const labelRadius = radius - 22;
+  const speedDisplay = getSpeedDisplay();
+
+  return (
+    <div className="flex flex-col items-center gap-2">
+      {/* Permission request UI */}
+      {showPermissionPrompt && permissionState === 'prompt' && (
+        <button
+          onClick={handleRequestPermission}
+          className="mb-2 px-6 py-3 text-sm font-semibold bg-cyan-600 hover:bg-cyan-700 text-white rounded-lg transition-colors shadow-lg"
+        >
+          Enable Motion & Orientation
+        </button>
+      )}
+      
+      {permissionState === 'denied' && !useGpsFallback && (
+        <div className="mb-2 px-4 py-2 text-xs bg-red-900/50 text-red-100 font-semibold rounded border border-red-600/70 shadow-lg">
+          Sensor access denied. Using GPS fallback.
+        </div>
+      )}
+      
+      {permissionState === 'checking' && (
+        <div className="mb-2 px-4 py-2 text-xs bg-blue-900/50 text-blue-100 font-semibold rounded border border-blue-600/70">
+          Checking sensors...
+        </div>
+      )}
+
+      {useGpsFallback && (
+        <div className="mb-2 px-3 py-1.5 text-xs bg-yellow-900/50 text-yellow-100 font-semibold rounded border border-yellow-600/70">
+          📍 GPS Mode
+        </div>
+      )}
+
+      {/* Info display - heading above compass */}
+      <div className="flex flex-col items-center gap-1 text-xs">
+        <div className="flex items-center gap-3 bg-black/50 px-3 py-1.5 rounded-lg">
+          <div className="text-white/90 font-semibold drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">
+            HDG: <span className="font-bold text-white">
+              {hasHeading ? `${Math.round(heading)}°` : '—'}
+            </span>
+          </div>
+          {hasWind && (
+            <div className="text-cyan-300 font-semibold drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">
+              WIND: <span className="font-bold text-cyan-400">
+                {Math.round(windToDirection)}°
+              </span>
+            </div>
+          )}
+        </div>
+        {windSpeedMph != null && !Number.isNaN(windSpeedMph) && (
+          <div className="text-cyan-300 font-semibold drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)] bg-black/50 px-3 py-1 rounded-lg">
+            Wind: {windSpeedMph.toFixed(1)} mph
+          </div>
+        )}
+      </div>
+
+      {/* Compass */}
+      <div 
+        className="relative rounded-full border-2 border-white/30 bg-gradient-to-b from-slate-800/90 to-slate-950/95 shadow-2xl"
+        style={{ width: size, height: size }}
+      >
+        {/* Rotating compass face */}
+        <div
+          className="absolute inset-0"
+          style={{            transform: hasHeading ? `rotate(${-rotationHeading}deg)` : 'rotate(0deg)',
+          }}
+        >
+          {/* Cardinal direction labels */}
+          {DIRECTIONS.map((d) => {
+            const rad = (d.angle - 90) * (Math.PI / 180);
+            const x = radius + labelRadius * Math.cos(rad);
+            const y = radius + labelRadius * Math.sin(rad);
+            const isNorth = d.label === 'N';
+            const isMajor = d.label.length === 1;
+
+            return (
+              <div
+                key={d.label}
+                className="absolute"
+                style={{
+                  left: `${x}px`,
+                  top: `${y}px`,
+                  transform: `translate(-50%, -50%) rotate(${rotationHeading}deg)`,
+                }}
+              >
+                <span
+                  className={cn(
+                    "font-bold drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)]",
+                    isNorth ? "text-red-400 text-lg" : isMajor ? "text-white text-base" : "text-white/80 text-sm"
+                  )}
+                >
+                  {d.label}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Center SVG for markers and arrows */}
+        <svg
+          className="absolute inset-0"
+          width={size}
+          height={size}
+          viewBox={`0 0 ${size} ${size}`}
+          style={{ pointerEvents: 'none' }}
+        >
+          {/* Degree tick marks */}
+          <g transform={hasHeading ? `rotate(${-rotationHeading} ${radius} ${radius})` : ''}>
+            {Array.from({ length: 36 }, (_, i) => i * 10).map((angle) => {
+              const isMajor = angle % 30 === 0;
+              const rad = (angle - 90) * (Math.PI / 180);
+              const innerRadius = radius - (isMajor ? 14 : 9);
+              const outerRadius = radius - 5;
+              
+              const x1 = radius + innerRadius * Math.cos(rad);
+              const y1 = radius + innerRadius * Math.sin(rad);
+              const x2 = radius + outerRadius * Math.cos(rad);
+              const y2 = radius + outerRadius * Math.sin(rad);
+
+              return (
+                <line
+                  key={angle}
+                  x1={x1}
+                  y1={y1}
+                  x2={x2}
+                  y2={y2}
+                  stroke="white"
+                  strokeOpacity={isMajor ? 0.8 : 0.4}
+                  strokeWidth={isMajor ? 2.5 : 1.5}
+                />
+              );
+            })}
+          </g>
+
+          {/* Wind arrow (cyan, fixed relative to compass rotation) */}
+          {hasWind && (
+            <g transform={`rotate(${windArrowRotation} ${radius} ${radius})`}>
+              {/* Arrow shaft */}
+              <line
+                x1={radius}
+                y1={radius}
+                x2={radius}
+                y2={radius - 38}
+                stroke="#06b6d4"
+                strokeWidth="4"
+                strokeLinecap="round"
+                opacity="0.95"
+              />
+              {/* Arrow head */}
+              <polygon
+                points={`${radius},${radius - 44} ${radius - 7},${radius - 31} ${radius + 7},${radius - 31}`}
+                fill="#06b6d4"
+                opacity="0.95"
+              />
+              {/* Background for label */}
+              <rect
+                x={radius - 20}
+                y={radius - 58}
+                width="40"
+                height="12"
+                fill="rgba(0, 0, 0, 0.8)"
+                rx="3"
+              />
+              {/* Label */}
+              <text
+                x={radius}
+                y={radius - 50}
+                textAnchor="middle"
+                fill="#06b6d4"
+                fontSize="11"
+                fontWeight="bold"
+                className="drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)]"
+              >
+                WIND
+              </text>
+            </g>
+          )}
+
+          {/* Center dot */}
+          <circle
+            cx={radius}
+            cy={radius}
+            r="4"
+            fill="white"
+            opacity="0.9"
+          />
+
+          {/* Device heading pointer (red triangle outline - positioned to show point) */}
+          <polygon
+            points={`${radius},8 ${radius - 16},34 ${radius + 16},34`}
+            fill="none"
+            stroke="#ef4444"
+            strokeWidth="1.5"
+            opacity="0.95"
+          />
+        </svg>
+
+        {/* Calibration indicator */}
+        {isCalibrating && permissionState === 'granted' && !useGpsFallback && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/60 rounded-full">
+            <div className="text-center text-xs text-white font-semibold drop-shadow-lg">
+              <div className="mb-2 text-sm">Move device in</div>
+              <div className="font-bold text-base">figure-8 pattern</div>
+              <div className="mt-1">to calibrate</div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Speed display with unit selector */}
+      <button
+        onClick={cycleSpeedUnit}
+        className="px-4 py-1.5 bg-slate-800/90 rounded-lg border border-white/20 hover:bg-slate-700/90 transition-colors"
+      >
+        <div className="text-white font-bold text-lg drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)]">
+          {speedDisplay.value}
+          <span className="text-sm ml-1 text-white/80">{speedDisplay.unit}</span>
+        </div>
+      </button>
+    </div>
+  );
+}

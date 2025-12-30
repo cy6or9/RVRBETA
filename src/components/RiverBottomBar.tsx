@@ -3,6 +3,7 @@ import * as React from "react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { WindCompass } from "@/components/WindCompass";
+import { DeviceCompass } from "@/components/DeviceCompass";
 
 interface RiverBottomBarProps {
   // station or location name (optional)
@@ -24,6 +25,9 @@ interface RiverBottomBarProps {
 
   // Find Me action
   onFindMe?: () => void;
+  
+  // Compass mode
+  useDeviceCompass?: boolean;
 }
 
 /**
@@ -42,7 +46,10 @@ export function RiverBottomBar({
   aqi,
   aqiCategory,
   onFindMe,
+  useDeviceCompass = false,
 }: RiverBottomBarProps) {
+  const [showDeviceCompass, setShowDeviceCompass] = React.useState(useDeviceCompass);
+  
   const displayTemp =
     tempF != null && !Number.isNaN(tempF) ? `${tempF.toFixed(1)}°F` : "--°F";
   const displayWind =
@@ -94,9 +101,25 @@ export function RiverBottomBar({
             </div>
           </div>
 
-          {/* Center: Wind compass + precip box underneath */}
+          {/* Center: Wind compass + precip box underneath + toggle button */}
           <div className="flex flex-col items-center justify-center gap-1">
-            <WindCompass directionDeg={windDirDeg} speedMph={windSpeedMph} />
+            {showDeviceCompass ? (
+              <DeviceCompass 
+                windDirectionDeg={windDirDeg}
+                windSpeedMph={windSpeedMph}
+                size={140}
+              />
+            ) : (
+              <WindCompass directionDeg={windDirDeg} speedMph={windSpeedMph} />
+            )}
+            
+            <button
+              onClick={() => setShowDeviceCompass(!showDeviceCompass)}
+              className="text-[0.65rem] text-cyan-400 hover:text-cyan-300 underline transition-colors"
+            >
+              {showDeviceCompass ? '← Static Compass' : 'Device Compass →'}
+            </button>
+            
             <div className="mt-1 rounded-md border border-border bg-background/70 px-2 py-1 text-[0.7rem] text-muted-foreground">
               🌧 {displayPrecip}
             </div>

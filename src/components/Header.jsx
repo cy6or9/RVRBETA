@@ -32,6 +32,7 @@ export default function Header() {
   const navItems = [
     { name: "River Conditions", href: "/river-conditions" },
     { name: "Weather", href: "/weather" },
+    { name: "Compass", href: "/compass" },
   ];
 
   return (
