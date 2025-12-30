@@ -30,9 +30,41 @@ export default function OhioRiverActivityMap({ locks = [], stations = [], select
   const [mapReady, setMapReady] = useState(false);
   const [initialFitDone, setInitialFitDone] = useState(false);
   const [refreshTrigger, setRefreshTrigger] = useState(0); // Trigger for auto-refresh
+  const [lockStatusData, setLockStatusData] = useState({}); // Store lock status data by lockId
   const prevSelectedLockIdRef = useRef(null);
   const prevUserLocationRef = useRef(null);
   const prevMapStyleRef = useRef(mapStyle);
+  
+  // Fetch lock status data for all locks
+  useEffect(() => {
+    const fetchLockStatusData = async () => {
+      const statusData = {};
+      
+      // Fetch all locks in parallel
+      await Promise.all(
+        locks.map(async (lock) => {
+          try {
+            const response = await fetch(
+              `/api/lock-status?lockId=${lock.id}&lockName=${encodeURIComponent(lock.name)}&riverMile=${lock.riverMile}`
+            );
+            
+            if (response.ok) {
+              const data = await response.json();
+              statusData[lock.id] = data;
+            }
+          } catch (err) {
+            console.error(`Failed to fetch status for ${lock.name}:`, err);
+          }
+        })
+      );
+      
+      setLockStatusData(statusData);
+    };
+    
+    if (locks.length > 0) {
+      fetchLockStatusData();
+    }
+  }, [locks, refreshTrigger]); // Re-fetch when locks change or refresh triggers
   
   // Auto-refresh markers every 5 minutes to keep data in sync with dropdown
   // FIXED: Add proper dependency array
@@ -249,7 +281,7 @@ export default function OhioRiverActivityMap({ locks = [], stations = [], select
     prevMapStyleRef.current = mapStyle;
   }, [mapStyle, mapReady]);
 
-  // Add/update lock markers when locks change
+  // Add/update lock markers when locks change or status data updates
   useEffect(() => {
     if (!map.current || !window.L || !mapReady) return;
     
@@ -263,20 +295,19 @@ export default function OhioRiverActivityMap({ locks = [], stations = [], select
     
     // Add locks as markers
     locks.forEach((lock) => {
-      // Generate activity data based on lock position with time variation
-      // Add timestamp to generate slightly different data on each update
-      const timestamp = Date.now();
-      const timeVariation = Math.floor(timestamp / 300000) % 10; // Changes every 5 minutes
-      const baseHash = (lock.riverMile * 17 + lock.lat * 13 + lock.lon * 7) % 100;
-      const lockHash = (baseHash + timeVariation) % 100;
-      const queueLength = Math.floor((lockHash * 0.05) % 5);
-      const congestion = lockHash;
-      const waitTime = Math.floor((lockHash * 2.4) % 240) + 30;
-      const towsLast24h = Math.floor((lockHash * 0.2) % 20) + 1;
-      const direction = lockHash > 50 ? 'upstream' : 'downstream';
-      const lastPassage = new Date(Date.now() - (lockHash * 36000));
+      // Get real lock status data from API
+      const lockStatus = lockStatusData[lock.id];
+      
+      // Use real data if available, otherwise use fallback values
+      const queueLength = lockStatus?.queueLength ?? 0;
+      const congestion = lockStatus?.congestion ?? 0;
+      const waitTime = lockStatus?.averageWaitTime ?? 0;
+      const towsLast24h = lockStatus?.towsLast24h ?? 0;
+      const direction = lockStatus?.direction ?? 'unknown';
+      const lastPassage = lockStatus?.lastTowPassage ? new Date(lockStatus.lastTowPassage) : new Date();
+      const isRealTimeData = lockStatus?.realTimeData ?? false;
 
-      // Color code based on congestion
+      // Color code based on congestion - matches LockDamMap colors
       let color, congestionLabel;
       if (congestion < 30) {
         color = '#10b981'; // Green - Light
@@ -318,12 +349,19 @@ export default function OhioRiverActivityMap({ locks = [], stations = [], select
       const marker = L.marker([lock.lat, lock.lon], { icon }).addTo(map.current);
       markersRef.current.push(marker);
 
-      // Create popup content
+      // Create popup content with data source indicator
+      const dataSourceBadge = isRealTimeData 
+        ? '<span style="background: #10b981; padding: 2px 6px; border-radius: 4px; font-size: 9px;">LIVE DATA</span>'
+        : '<span style="background: #3b82f6; padding: 2px 6px; border-radius: 4px; font-size: 9px;">ESTIMATED</span>';
+      
       const popupContent = `
         <div style="background: #1e293b; color: white; padding: 12px; border-radius: 8px; max-width: 280px; font-size: 12px;">
-          <h3 style="margin: 0 0 8px 0; color: #06b6d4; font-size: 14px;">${lock.name}</h3>
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+            <h3 style="margin: 0; color: #06b6d4; font-size: 14px;">${lock.name}</h3>
+            ${dataSourceBadge}
+          </div>
           <div style="border-bottom: 1px solid #475569; padding-bottom: 8px; margin-bottom: 8px;">
-            <div> River Mile: ${lock.riverMile}</div>
+            <div>📍 River Mile: ${lock.riverMile}</div>
             <div>🚢 Queue: <strong>${queueLength} tows</strong></div>
           </div>
           <div style="border-bottom: 1px solid #475569; padding-bottom: 8px; margin-bottom: 8px;">
@@ -332,7 +370,7 @@ export default function OhioRiverActivityMap({ locks = [], stations = [], select
           </div>
           <div style="border-bottom: 1px solid #475569; padding-bottom: 8px; margin-bottom: 8px;">
             <div>📈 Last 24h: <strong>${towsLast24h} passages</strong></div>
-            <div>${direction === 'upstream' ? '⬆️ Upstream' : '⬇️ Downstream'} traffic</div>
+            <div>${direction === 'upstream' ? '⬆️ Upstream' : direction === 'downstream' ? '⬇️ Downstream' : '↔️ Mixed'} traffic</div>
           </div>
           <div style="font-size: 10px; color: #94a3b8;">
             Last passage: ${lastPassage.toLocaleTimeString()}
@@ -352,7 +390,7 @@ export default function OhioRiverActivityMap({ locks = [], stations = [], select
         }
       });
     });
-  }, [locks, mapReady, onLockSelect, refreshTrigger]); // Added refreshTrigger dependency
+  }, [locks, mapReady, onLockSelect, refreshTrigger, lockStatusData]); // Added lockStatusData dependency
 
   // Add city/township markers (non-L&D stations)
   // FIXED: Add proper dependency array and memoize filtering
@@ -647,9 +685,9 @@ export default function OhioRiverActivityMap({ locks = [], stations = [], select
           Ohio River Activity Map | 🟢 Green: Light traffic (&lt;30% congestion) | 🟡 Yellow: Moderate traffic (30-70% congestion) | 🔴 Red: Heavy traffic (&gt;70% congestion)
         </p>
         <p className="text-white/60 text-[10px] border-t border-white/10 pt-1.5">
-          <strong>Data Source:</strong> U.S. Army Corps of Engineers (USACE) public lock logs. 
-          This tracks infrastructure analytics—not individual vessels. 
-          Courts protect this as transformative use.
+          <strong>Data Source:</strong> U.S. Army Corps of Engineers (USACE) Lock Performance Monitoring System. 
+          Real-time data when available; estimated from historical patterns when USACE feeds are unavailable.
+          Analytics track infrastructure activity, not individual vessels.
         </p>
       </div>
 

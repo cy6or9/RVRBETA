@@ -26,45 +26,58 @@ export default function LockDamMap() {
   const locks = ohioRiverLocks;
 
   useEffect(() => {
-    // Fetch USACE lock data (would integrate real API)
-    // For now, mock data showing locks with simulated activity
+    // Fetch real USACE lock data via our API
     const initializeLockData = async () => {
       try {
         setLoading(true);
-        // TODO: Replace with actual USACE API call
-        // Format: GET https://api.usace.army.mil/locks/{lockId}/queue or similar
         
-        // Mock data structure for demo - using same deterministic logic as map markers
-        // Add timestamp to generate slightly different data on each update
-        const timestamp = Date.now();
-        const mockData = locks.map((lock, idx) => {
-          // Use lock ID + timestamp to generate time-varying pseudo-random values
-          const baseHash = (lock.riverMile * 17 + lock.lat * 13 + lock.lon * 7) % 100;
-          const timeVariation = Math.floor(timestamp / 300000) % 10; // Changes every 5 minutes
-          const lockHash = (baseHash + timeVariation) % 100;
-          const queueLength = Math.floor((lockHash * 0.05) % 5);
-          const congestion = lockHash;
-          const waitTime = Math.floor(30 + (lockHash * 2.4) % 210);
-          const towsLast24h = Math.floor(1 + (lockHash * 0.2) % 20);
-          const direction = lockHash > 50 ? 'upstream' : 'downstream';
-          const lastPassage = new Date(Date.now() - (lockHash * 36000));
-          
-          return {
-            ...lock,
-            queueLength,
-            lastTowPassage: lastPassage.toISOString(),
-            towsLast24h,
-            averageWaitTime: waitTime,
-            direction,
-            congestion,
-          };
+        // Fetch data for all locks in parallel
+        const lockDataPromises = locks.map(async (lock) => {
+          try {
+            const response = await fetch(
+              `/api/lock-status?lockId=${lock.id}&lockName=${encodeURIComponent(lock.name)}&riverMile=${lock.riverMile}`
+            );
+            
+            if (!response.ok) {
+              throw new Error(`HTTP ${response.status}`);
+            }
+            
+            const data = await response.json();
+            
+            return {
+              ...lock,
+              queueLength: data.queueLength || 0,
+              lastTowPassage: data.lastTowPassage,
+              towsLast24h: data.towsLast24h || 0,
+              averageWaitTime: data.averageWaitTime || 0,
+              direction: data.direction || 'unknown',
+              congestion: data.congestion || 0,
+              source: data.source || 'unknown',
+              realTimeData: data.realTimeData || false,
+            };
+          } catch (err) {
+            console.error(`Failed to fetch data for ${lock.name}:`, err);
+            // Return lock with default values on error
+            return {
+              ...lock,
+              queueLength: 0,
+              lastTowPassage: new Date().toISOString(),
+              towsLast24h: 0,
+              averageWaitTime: 0,
+              direction: 'unknown',
+              congestion: 0,
+              source: 'unavailable',
+              realTimeData: false,
+            };
+          }
         });
-
-        setLockData(mockData);
+        
+        const results = await Promise.all(lockDataPromises);
+        setLockData(results);
         setError(null);
       } catch (err) {
+        console.error("Error initializing lock data:", err);
         setError("Unable to load lock data");
-
       } finally {
         setLoading(false);
       }
@@ -120,9 +133,20 @@ export default function LockDamMap() {
           return (
             <div
               key={lock.id}
-              className={`p-2 rounded border text-xs ${congestionColor} transition-colors`}
+              className={`p-2 rounded border text-xs ${congestionColor} transition-colors relative`}
             >
-              <div className="font-semibold text-white mb-1">{lock.name}</div>
+              <div className="font-semibold text-white mb-1 flex items-center justify-between">
+                <span>{lock.name}</span>
+                {lock.realTimeData ? (
+                  <span className="text-[9px] bg-green-600/30 px-1.5 py-0.5 rounded" title="Real-time USACE data">
+                    LIVE
+                  </span>
+                ) : (
+                  <span className="text-[9px] bg-blue-600/30 px-1.5 py-0.5 rounded" title="Estimated from historical patterns">
+                    EST
+                  </span>
+                )}
+              </div>
               <div className="space-y-0.5 text-white/80">
                 <div>
                   🚢 Queue: <span className="font-semibold">{lock.queueLength}</span> tows
@@ -150,11 +174,13 @@ export default function LockDamMap() {
 
       <div className="mt-3 text-[10px] text-white/60 border-t border-white/10 pt-2">
         <p className="mb-1">
-          <strong>Data Source:</strong> U.S. Army Corps of Engineers (USACE) public lock logs
+          <strong>Data Source:</strong> U.S. Army Corps of Engineers (USACE) Lock Performance Monitoring System
+        </p>
+        <p className="mb-1">
+          Real-time data when available; estimated from historical patterns when USACE feeds are unavailable.
         </p>
         <p>
-          <strong>Note:</strong> Analytics track infrastructure activity, not individual vessels. 
-          Courts protect this as transformative use.
+          <strong>Note:</strong> Analytics track infrastructure activity, not individual vessels.
         </p>
       </div>
     </div>
