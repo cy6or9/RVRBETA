@@ -1126,8 +1126,7 @@ export default function RiverConditions() {
   const findDownstreamLock = useCallback((riverLat, riverLon, locks) => {
     if (!Array.isArray(locks) || locks.length === 0) return null;
 
-    // Find all locks that are downstream (higher river mile)
-    // First, find nearest lock to determine our position on the river
+    // Find the nearest lock to the user's position
     let nearest = null;
     let bestDist = Infinity;
 
@@ -1142,37 +1141,27 @@ export default function RiverConditions() {
 
     if (!nearest) return null;
 
-    // Find the next lock downstream (higher river mile)
+    // If we have river miles, find which lock the user is upstream of
     if (typeof nearest.riverMile === "number") {
-      const downstreamCandidates = locks
-        .filter((lock) => typeof lock?.riverMile === "number" && lock.riverMile > nearest.riverMile)
+      // Get user's approximate river mile by comparing to nearest lock
+      const userRiverMile = nearest.riverMile;
+      
+      // Find all locks that are downstream (higher river mile) from user's position
+      const downstreamLocks = locks
+        .filter((lock) => 
+          typeof lock?.riverMile === "number" && 
+          lock.riverMile >= userRiverMile
+        )
         .sort((a, b) => a.riverMile - b.riverMile);
       
-      if (downstreamCandidates.length > 0) {
-        return downstreamCandidates[0];
+      // Return the closest downstream lock (could be the nearest if user is very close)
+      if (downstreamLocks.length > 0) {
+        return downstreamLocks[0];
       }
     }
 
-    // Fallback — Ohio River flows downstream (increasing latitude until it curves)
-    // Use distance along river if available, otherwise use simple lat/lon
-    const downstreamByPosition = locks
-      .filter((lock) => {
-        if (!lock?.lat || !lock?.lon) return false;
-        // Calculate if this lock is "downstream" based on distance from nearest
-        const distFromNearest = distKm(nearest.lat, nearest.lon, lock.lat, lock.lon);
-        return distFromNearest > 1; // At least 1km away
-      })
-      .sort((a, b) => {
-        // Sort by river mile if available, otherwise by distance from current position
-        if (typeof a.riverMile === 'number' && typeof b.riverMile === 'number') {
-          return a.riverMile - b.riverMile;
-        }
-        const distA = distKm(riverLat, riverLon, a.lat, a.lon);
-        const distB = distKm(riverLat, riverLon, b.lat, b.lon);
-        return distA - distB;
-      })[0];
-
-    return downstreamByPosition || nearest;
+    // Fallback to nearest lock if river mile logic doesn't work
+    return nearest;
   }, []); // Memoize function - no dependencies needed
 
   // Memoize buildFindMeInfo to prevent recalculation

@@ -23,6 +23,7 @@ export function AuthProvider({ children }) {
   const sessionStartRef = useRef(null);
   const loginRecordedRef = useRef(false);
   const previousUserRef = useRef(null);
+  const profileCreationRef = useRef(new Set()); // Track in-flight profile creations
 
   // Handle redirect result from Google Sign-In - MUST happen before any navigation
   useEffect(() => {
@@ -33,32 +34,40 @@ export function AuthProvider({ children }) {
     const handleRedirect = async () => {
       try {
         const result = await getRedirectResult(auth);
-        console.log("[AuthContext] getRedirectResult resolved:", result);
+        console.log("[AuthContext] getRedirectResult resolved:", result ? 'success' : 'null');
         
         if (result && result.user) {
           console.log("[AuthContext] Redirect result found, user:", result.user.email);
           
-          // Create user profile if needed
-          try {
-            await createUserProfile(result.user.uid, {
-              email: result.user.email,
-              displayName: result.user.displayName,
-              photoURL: result.user.photoURL,
-            });
-          } catch (error) {
-            console.error("[AuthContext] Error creating user profile:", error);
-          }
-          
-          // Record login with full user data
-          try {
-            await setLastLogin(
-              result.user.uid, 
-              result.user.email,
-              result.user.displayName || '',
-              result.user.photoURL
-            );
-          } catch (error) {
-            console.error("[AuthContext] Error recording login:", error);
+          // Deduplicate profile creation - don't create if already in flight
+          if (!profileCreationRef.current.has(result.user.uid)) {
+            profileCreationRef.current.add(result.user.uid);
+            
+            // Create user profile if needed
+            try {
+              await createUserProfile(result.user.uid, {
+                email: result.user.email,
+                displayName: result.user.displayName,
+                photoURL: result.user.photoURL,
+              });
+              console.log("[AuthContext] Profile creation successful");
+            } catch (error) {
+              console.error("[AuthContext] Error creating user profile:", error.message);
+            } finally {
+              profileCreationRef.current.delete(result.user.uid);
+            }
+            
+            // Record login with full user data
+            try {
+              await setLastLogin(
+                result.user.uid, 
+                result.user.email,
+                result.user.displayName || '',
+                result.user.photoURL
+              );
+            } catch (error) {
+              console.error("[AuthContext] Error recording login:", error.message);
+            }
           }
           
           // Set session start
@@ -74,9 +83,12 @@ export function AuthProvider({ children }) {
           }
         }
       } catch (error) {
-        console.error("[AuthContext] getRedirectResult error:", error);
+        console.error("[AuthContext] getRedirectResult error:", error.message);
         if (error.code !== 'auth/popup-closed-by-user') {
-          alert("Login failed: " + error.message);
+          // Don't show alert for fetch abort errors
+          if (!error.message.includes('aborted')) {
+            alert("Login failed: " + error.message);
+          }
         }
       } finally {
         // Mark redirect as handled
@@ -133,8 +145,13 @@ export function AuthProvider({ children }) {
         const elapsedSeconds = Math.floor((Date.now() - sessionStartRef.current) / 1000);
         if (elapsedSeconds > 5) {
           try {
-            saveSessionDuration(user.uid, elapsedSeconds).catch(() => {});
-            setLastLogout(user.uid).catch(() => {});
+            // Use Promise.allSettled to prevent one failure from blocking others
+            Promise.allSettled([
+              saveSessionDuration(user.uid, elapsedSeconds).catch(() => {}),
+              setLastLogout(user.uid).catch(() => {})
+            ]).catch(() => {
+              // Silently fail - don't block page unload
+            });
           } catch (error) {
             // Silently fail - don't block page unload
           }
@@ -186,20 +203,21 @@ export function AuthProvider({ children }) {
       const elapsedSeconds = Math.floor((Date.now() - sessionStartRef.current) / 1000);
       if (elapsedSeconds > 5) {
         try {
-          // CRITICAL: Wait for saves to complete BEFORE signing out
-          // Use timeout to prevent hanging, but actually wait for completion
-          await Promise.race([
-            Promise.all([
-              saveSessionDuration(user.uid, elapsedSeconds),
-              setLastLogout(user.uid)
-            ]),
-            new Promise((_, reject) => 
-              setTimeout(() => reject(new Error('Timeout')), 3000)
-            )
+          // Use allSettled to not block logout even if save fails
+          const results = await Promise.allSettled([
+            saveSessionDuration(user.uid, elapsedSeconds),
+            setLastLogout(user.uid)
           ]);
-          console.log("[AuthContext] Session saved successfully");
+          
+          // Log results but don't fail on errors
+          const errors = results.filter(r => r.status === 'rejected');
+          if (errors.length > 0) {
+            console.warn("[AuthContext] Some session saves failed (continuing with logout):", errors);
+          } else {
+            console.log("[AuthContext] Session saved successfully");
+          }
         } catch (error) {
-          console.error("[AuthContext] Error saving session on logout:", error);
+          console.error("[AuthContext] Error saving session on logout:", error.message);
           // Continue with logout even if save fails
         }
       }

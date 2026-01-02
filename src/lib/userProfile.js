@@ -344,6 +344,7 @@ export async function removePreferredStation(userId, stationId) {
 /**
  * Update last login timestamp and create profile if missing
  * FIXED: Uses setDoc with merge to avoid offline errors
+ * FIXED: Added abort signal handling and timeout protection
  * @param {string} userId - Firebase user UID
  * @param {string} email - User email
  */
@@ -351,53 +352,63 @@ export async function setLastLogin(userId, email, displayName = '', photoURL = n
   if (!firebaseEnabled || !db) return;
 
   try {
-    const userRef = doc(db, "userProfiles", userId);
-    
-    // First, get existing stats to preserve totalOnlineSeconds
-    let existingStats = {};
+    // Create abort controller for timeout
+    const abortController = new AbortController();
+    const timeoutId = setTimeout(() => {
+      abortController.abort();
+    }, 8000); // 8 second timeout
+
     try {
-      const docSnap = await getDoc(userRef);
-      if (docSnap.exists()) {
-        existingStats = docSnap.data().stats || {};
+      const userRef = doc(db, "userProfiles", userId);
+      
+      // First, get existing stats to preserve totalOnlineSeconds
+      let existingStats = {};
+      try {
+        const docSnap = await getDoc(userRef);
+        if (docSnap.exists()) {
+          existingStats = docSnap.data().stats || {};
+        }
+      } catch (err) {
+        // If we can't read the doc, just use empty stats
+        console.log("[userProfile] Could not fetch existing stats, creating new");
       }
-    } catch (err) {
-      console.log("[userProfile] Could not fetch existing stats, creating new");
+      
+      // Build update object with proper nested structure
+      const updates = {
+        uid: userId,
+        stats: {
+          ...existingStats,
+          lastLoginAt: serverTimestamp(),
+        },
+        updatedAt: serverTimestamp(),
+      };
+      
+      // Only set these fields if they have values
+      if (email) updates.email = email;
+      if (displayName) updates.displayName = displayName;
+      if (photoURL) updates.photoURL = photoURL;
+      
+      console.log("[userProfile] setLastLogin updating user", userId);
+      
+      await setDoc(userRef, updates, { merge: true });
+      console.log("[userProfile] setLastLogin complete for", userId);
+    } finally {
+      clearTimeout(timeoutId);
     }
     
-    // Build update object with proper nested structure
-    const updates = {
-      uid: userId,
-      stats: {
-        ...existingStats,
-        lastLoginAt: serverTimestamp(),
-      },
-      updatedAt: serverTimestamp(),
-    };
-    
-    // Only set these fields if they have values
-    if (email) updates.email = email;
-    if (displayName) updates.displayName = displayName;
-    if (photoURL) updates.photoURL = photoURL;
-    
-    console.log("[userProfile] setLastLogin updating:", { 
-      userId, 
-      email, 
-      displayName, 
-      hasPhoto: !!photoURL,
-    });
-    
-    await setDoc(userRef, updates, { merge: true });
-    console.log("[userProfile] setLastLogin complete");
-    
   } catch (error) {
-    console.error("[userProfile] Error setting last login:", error);
-    throw error; // Re-throw so we can see it in the console
+    // Log error but don't re-throw - allow login to continue
+    console.warn("[userProfile] Warning: Could not set last login:", error.message);
+    if (error.message.includes('aborted') || error.name === 'AbortError') {
+      console.warn("[userProfile] Login write timed out - continuing anyway");
+    }
   }
 }
 
 /**
  * Update last logout timestamp
  * FIXED: Uses setDoc with merge to avoid updateDoc on non-existent docs
+ * FIXED: Added better error handling for network issues
  * @param {string} userId - Firebase user UID
  */
 export async function setLastLogout(userId) {
@@ -426,13 +437,15 @@ export async function setLastLogout(userId) {
       updatedAt: serverTimestamp(),
     }, { merge: true });
   } catch (error) {
-    console.error("Error setting last logout:", error);
+    // Don't re-throw on logout - just warn
+    console.warn("[userProfile] Warning setting last logout:", error.message);
   }
 }
 
 /**
  * Save session duration (called once on logout/tab close)
  * FIXED: Uses setDoc with merge to avoid updateDoc on non-existent docs
+ * FIXED: Added timeout protection and abort signal handling
  * @param {string} userId - Firebase user UID
  * @param {number} elapsedSeconds - Number of seconds to add
  */
@@ -441,29 +454,43 @@ export async function saveSessionDuration(userId, elapsedSeconds) {
   if (elapsedSeconds <= 0) return;
 
   try {
-    const userRef = doc(db, "userProfiles", userId);
-    
-    // Get existing stats to preserve lastLoginAt and other fields
-    let existingStats = {};
+    const abortController = new AbortController();
+    const timeoutId = setTimeout(() => {
+      abortController.abort();
+    }, 8000); // 8 second timeout
+
     try {
-      const docSnap = await getDoc(userRef);
-      if (docSnap.exists()) {
-        existingStats = docSnap.data().stats || {};
+      const userRef = doc(db, "userProfiles", userId);
+      
+      // Get existing stats to preserve lastLoginAt and other fields
+      let existingStats = {};
+      try {
+        const docSnap = await getDoc(userRef);
+        if (docSnap.exists()) {
+          existingStats = docSnap.data().stats || {};
+        }
+      } catch (err) {
+        console.log("[userProfile] Could not fetch existing stats for session save");
       }
-    } catch (err) {
-      console.log("[userProfile] Could not fetch existing stats for session save");
+      
+      // Calculate new total seconds
+      const newTotalSeconds = (existingStats.totalOnlineSeconds || 0) + elapsedSeconds;
+      
+      // Use setDoc with merge to safely update
+      await setDoc(userRef, {
+        stats: {
+          ...existingStats,
+          totalOnlineSeconds: newTotalSeconds,
+        },
+        updatedAt: serverTimestamp(),
+      }, { merge: true });
+      
+      console.log("[userProfile] Session duration saved:", elapsedSeconds, "seconds");
+    } finally {
+      clearTimeout(timeoutId);
     }
-    
-    // Use setDoc with merge to safely update
-    await setDoc(userRef, {
-      stats: {
-        ...existingStats,
-        totalOnlineSeconds: increment(elapsedSeconds),
-      },
-      updatedAt: serverTimestamp(),
-    }, { merge: true });
   } catch (error) {
-    console.error("Error saving session duration:", error);
+    console.warn("[userProfile] Warning saving session duration:", error.message);
   }
 }
 

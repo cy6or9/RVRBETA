@@ -191,3 +191,43 @@ iframe + div [role="search"] input {
   border-radius: 12px !important;
   backdrop-filter: blur(6px);
 }
+
+/* Compass calibration figure-8 animation */
+@keyframes figure8 {
+  0% {
+    transform: translate(0, -24px) rotate(-10deg);
+    opacity: 1;
+  }
+  12.5% {
+    transform: translate(-18px, -12px) rotate(-20deg);
+    opacity: 0.95;
+  }
+  25% {
+    transform: translate(-24px, 0) rotate(-25deg);
+    opacity: 0.9;
+  }
+  37.5% {
+    transform: translate(-18px, 12px) rotate(-20deg);
+    opacity: 0.85;
+  }
+  50% {
+    transform: translate(0, 24px) rotate(10deg);
+    opacity: 0.8;
+  }
+  62.5% {
+    transform: translate(18px, 12px) rotate(20deg);
+    opacity: 0.85;
+  }
+  75% {
+    transform: translate(24px, 0) rotate(25deg);
+    opacity: 0.9;
+  }
+  87.5% {
+    transform: translate(18px, -12px) rotate(20deg);
+    opacity: 0.95;
+  }
+  100% {
+    transform: translate(0, -24px) rotate(-10deg);
+    opacity: 1;
+  }
+}

@@ -62,12 +62,35 @@ export function DeviceCompass({
   const [useGpsFallback, setUseGpsFallback] = React.useState(false);
   const [showPermissionPrompt, setShowPermissionPrompt] = React.useState(false);
   const [permissionsGranted, setPermissionsGranted] = React.useState(false); // Trigger to re-setup after permission grant
+  const [manualRecalibrating, setManualRecalibrating] = React.useState(false);
+  const [calibrationComplete, setCalibrationComplete] = React.useState(false);
+  const [screenOrientation, setScreenOrientation] = React.useState<number>(0); // Current screen orientation angle
   
   const animationFrameRef = React.useRef<number | undefined>(undefined);
   const smoothedHeadingRef = React.useRef<number>(0);
   const gpsWatchIdRef = React.useRef<number | null>(null);
   const lastPositionRef = React.useRef<{ lat: number; lon: number; time: number } | null>(null);
   const lastGpsHeadingRef = React.useRef<number | null>(null);
+  const calibrationStartTimeRef = React.useRef<number | null>(null);
+  const stableReadingsRef = React.useRef<number>(0);
+  
+  // Get screen orientation adjustment
+  const getOrientationAdjustment = () => {
+    if (typeof window === 'undefined') return 0;
+    
+    // Use Screen Orientation API if available
+    if (window.screen?.orientation?.angle !== undefined) {
+      return window.screen.orientation.angle;
+    }
+    
+    // Fallback to window.orientation (deprecated but still useful)
+    if (window.orientation !== undefined) {
+      // window.orientation values: 0 (portrait), 90 (landscape left), -90/270 (landscape right), 180 (portrait upside down)
+      return window.orientation;
+    }
+    
+    return 0;
+  };
   
   // 90-degree offset for sensor accuracy
   const HEADING_OFFSET = -90;
@@ -195,6 +218,33 @@ export function DeviceCompass({
     );
   };
 
+  // Listen for screen orientation changes
+  React.useEffect(() => {
+    const handleOrientationChange = () => {
+      const angle = getOrientationAdjustment();
+      setScreenOrientation(angle);
+    };
+    
+    // Set initial orientation
+    handleOrientationChange();
+    
+    // Listen for orientation changes
+    if (window.screen?.orientation) {
+      window.screen.orientation.addEventListener('change', handleOrientationChange);
+    } else {
+      // Fallback for older browsers
+      window.addEventListener('orientationchange', handleOrientationChange);
+    }
+    
+    return () => {
+      if (window.screen?.orientation) {
+        window.screen.orientation.removeEventListener('change', handleOrientationChange);
+      } else {
+        window.removeEventListener('orientationchange', handleOrientationChange);
+      }
+    };
+  }, []);
+
   // Check for sensor support and request permission
   React.useEffect(() => {
     let handler: ((e: DeviceOrientationEvent) => void) | null = null;
@@ -208,23 +258,22 @@ export function DeviceCompass({
         // This gives true north heading (0-360) directly
         if ((event as any).webkitCompassHeading !== undefined) {
           // iOS webkitCompassHeading is already calibrated to true north
-          // Just apply our offset correction
-          compassHeading = ((event as any).webkitCompassHeading + HEADING_OFFSET + 360) % 360;
+          // Apply offset and screen orientation
+          compassHeading = ((event as any).webkitCompassHeading + HEADING_OFFSET - screenOrientation + 360) % 360;
         } 
         // Use alpha for Android/others with compass
         else if (event.alpha !== null && event.absolute) {
           // Android alpha: 0 = North, increases clockwise
-          // Apply offset correction
-          compassHeading = (360 - event.alpha + HEADING_OFFSET + 360) % 360;
+          // Invert for counter-clockwise rotation and add 180 to correct pole orientation
+          compassHeading = (180 - event.alpha + HEADING_OFFSET + 360) % 360;
         }
         // Fallback to alpha even without absolute flag
         else if (event.alpha !== null) {
           // Relative orientation - less accurate but better than nothing
-          compassHeading = (360 - event.alpha + HEADING_OFFSET + 360) % 360;
+          compassHeading = (180 - event.alpha + HEADING_OFFSET + 360) % 360;
         }
 
         if (compassHeading !== null) {
-          setIsCalibrating(false);
           const smoothed = smoothHeading(compassHeading);
           
           if (animationFrameRef.current) {
@@ -234,6 +283,11 @@ export function DeviceCompass({
           animationFrameRef.current = requestAnimationFrame(() => {
             setHeading(smoothed);
           });
+          
+          // Just clear auto-calibration flag
+          if (!manualRecalibrating) {
+            setIsCalibrating(false);
+          }
         } else {
           setIsCalibrating(true);
         }
@@ -319,7 +373,29 @@ export function DeviceCompass({
         navigator.geolocation.clearWatch(gpsWatchIdRef.current);
       }
     };
-  }, [permissionsGranted]);
+  }, [permissionsGranted, screenOrientation]);
+
+  const handleRecalibrate = () => {
+    setManualRecalibrating(true);
+    setCalibrationComplete(false);
+    calibrationStartTimeRef.current = Date.now();
+    stableReadingsRef.current = 0;
+    // Reset smoothing for fresh calibration
+    smoothedHeadingRef.current = 0;
+    
+    // Auto-complete after 10 seconds
+    setTimeout(() => {
+      setManualRecalibrating(false);
+      setCalibrationComplete(true);
+      calibrationStartTimeRef.current = null;
+      stableReadingsRef.current = 0;
+      
+      // Hide completion message after 3 seconds
+      setTimeout(() => {
+        setCalibrationComplete(false);
+      }, 3000);
+    }, 10000);
+  };
 
   const handleRequestPermission = async () => {
     console.log('[Compass] Permission request started');
@@ -415,7 +491,7 @@ export function DeviceCompass({
   const speedDisplay = getSpeedDisplay();
 
   return (
-    <div className="flex flex-col items-center gap-2">
+    <div className="flex flex-col items-center gap-4">
       {/* Permission request UI */}
       {showPermissionPrompt && permissionState === 'prompt' && (
         <button
@@ -427,41 +503,41 @@ export function DeviceCompass({
       )}
       
       {permissionState === 'denied' && !useGpsFallback && (
-        <div className="mb-2 px-4 py-2 text-xs bg-red-900/50 text-red-100 font-semibold rounded border border-red-600/70 shadow-lg">
+        <div className="px-5 py-3 text-sm bg-red-900/50 text-red-100 font-semibold rounded-lg border-2 border-red-500/70 shadow-lg shadow-red-500/30">
           Sensor access denied. Using GPS fallback.
         </div>
       )}
       
       {permissionState === 'checking' && (
-        <div className="mb-2 px-4 py-2 text-xs bg-blue-900/50 text-blue-100 font-semibold rounded border border-blue-600/70">
+        <div className="px-5 py-3 text-sm bg-emerald-900/50 text-emerald-100 font-semibold rounded-lg border-2 border-emerald-500/70 shadow-lg shadow-emerald-500/30">
           Checking sensors...
         </div>
       )}
 
       {useGpsFallback && (
-        <div className="mb-2 px-3 py-1.5 text-xs bg-yellow-900/50 text-yellow-100 font-semibold rounded border border-yellow-600/70">
+        <div className="px-5 py-3 text-sm bg-yellow-900/50 text-yellow-100 font-semibold rounded-lg border-2 border-yellow-500/70 shadow-lg shadow-yellow-500/30">
           📍 GPS Mode
         </div>
       )}
 
       {/* Info display - heading above compass */}
-      <div className="flex flex-col items-center gap-1 text-xs">
-        <div className="flex items-center gap-3 bg-black/50 px-3 py-1.5 rounded-lg">
-          <div className="text-white/90 font-semibold drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">
-            HDG: <span className="font-bold text-white">
+      <div className="flex flex-col items-center gap-2">
+        <div className="flex items-center gap-3 bg-black/70 backdrop-blur-sm px-4 py-2 rounded-xl border-2 border-emerald-400/50 shadow-lg shadow-emerald-500/30">
+          <div className="text-white font-semibold drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)] text-sm">
+            HDG: <span className="text-emerald-400 text-base">
               {hasHeading ? `${Math.round(heading)}°` : '—'}
             </span>
           </div>
           {hasWind && (
-            <div className="text-cyan-300 font-semibold drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">
-              WIND: <span className="font-bold text-cyan-400">
+            <div className="text-cyan-300 font-semibold drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)] text-sm">
+              WIND: <span className="text-cyan-400 text-base">
                 {Math.round(windToDirection)}°
               </span>
             </div>
           )}
         </div>
         {windSpeedMph != null && !Number.isNaN(windSpeedMph) && (
-          <div className="text-cyan-300 font-semibold drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)] bg-black/50 px-3 py-1 rounded-lg">
+          <div className="text-cyan-300 font-semibold drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)] bg-black/70 backdrop-blur-sm px-4 py-1.5 rounded-lg border-2 border-cyan-400/50 shadow-lg shadow-cyan-500/30 text-sm">
             Wind: {windSpeedMph.toFixed(1)} mph
           </div>
         )}
@@ -469,46 +545,11 @@ export function DeviceCompass({
 
       {/* Compass */}
       <div 
-        className="relative rounded-full border-2 border-white/30 bg-gradient-to-b from-slate-800/90 to-slate-950/95 shadow-2xl"
+        className="relative rounded-full border-4 border-emerald-400/40 bg-gradient-to-b from-slate-800/95 to-slate-950/98 shadow-2xl shadow-emerald-500/20"
         style={{ width: size, height: size }}
       >
-        {/* Rotating compass face */}
-        <div
-          className="absolute inset-0"
-          style={{            transform: hasHeading ? `rotate(${-rotationHeading}deg)` : 'rotate(0deg)',
-          }}
-        >
-          {/* Cardinal direction labels */}
-          {DIRECTIONS.map((d) => {
-            const rad = (d.angle - 90) * (Math.PI / 180);
-            const x = radius + labelRadius * Math.cos(rad);
-            const y = radius + labelRadius * Math.sin(rad);
-            const isNorth = d.label === 'N';
-            const isMajor = d.label.length === 1;
-
-            return (
-              <div
-                key={d.label}
-                className="absolute"
-                style={{
-                  left: `${x}px`,
-                  top: `${y}px`,
-                  transform: `translate(-50%, -50%) rotate(${rotationHeading}deg)`,
-                }}
-              >
-                <span
-                  className={cn(
-                    "font-bold drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)]",
-                    isNorth ? "text-red-400 text-lg" : isMajor ? "text-white text-base" : "text-white/80 text-sm"
-                  )}
-                >
-                  {d.label}
-                </span>
-              </div>
-            );
-          })}
-        </div>
-
+        {/* Neon green glow ring */}
+        <div className="absolute -inset-2 rounded-full bg-gradient-to-r from-emerald-500/20 via-green-500/20 to-emerald-500/20 blur-xl" />
         {/* Center SVG for markers and arrows */}
         <svg
           className="absolute inset-0"
@@ -522,13 +563,14 @@ export function DeviceCompass({
             {Array.from({ length: 36 }, (_, i) => i * 10).map((angle) => {
               const isMajor = angle % 30 === 0;
               const rad = (angle - 90) * (Math.PI / 180);
-              const innerRadius = radius - (isMajor ? 14 : 9);
+              const innerRadius = radius - (isMajor ? 18 : 9);
               const outerRadius = radius - 5;
               
               const x1 = radius + innerRadius * Math.cos(rad);
               const y1 = radius + innerRadius * Math.sin(rad);
               const x2 = radius + outerRadius * Math.cos(rad);
               const y2 = radius + outerRadius * Math.sin(rad);
+              const isNorth = angle === 0;
 
               return (
                 <line
@@ -537,50 +579,73 @@ export function DeviceCompass({
                   y1={y1}
                   x2={x2}
                   y2={y2}
-                  stroke="white"
-                  strokeOpacity={isMajor ? 0.8 : 0.4}
-                  strokeWidth={isMajor ? 2.5 : 1.5}
+                  stroke={isNorth ? "#10b981" : "white"}
+                  strokeOpacity={isNorth ? 0.9 : isMajor ? 0.8 : 0.4}
+                  strokeWidth={isMajor ? 3 : 2}
                 />
+              );
+            })}
+            
+            {/* Direction labels - all 16 compass points */}
+            {DIRECTIONS.map((direction) => {
+              const rad = (direction.angle - 90) * (Math.PI / 180);
+              const labelRadius = radius - 28;
+              const labelX = radius + labelRadius * Math.cos(rad);
+              const labelY = radius + labelRadius * Math.sin(rad);
+              const isNorth = direction.angle === 0;
+              const isMajor = direction.label.length === 1;
+
+              return (
+                <text
+                  key={direction.label}
+                  x={labelX}
+                  y={labelY}
+                  textAnchor="middle"
+                  dominantBaseline="middle"
+                  fill={isNorth ? "#10b981" : isMajor ? "white" : "rgba(255,255,255,0.7)"}
+                  fontSize={isNorth ? "20" : isMajor ? "18" : "12"}
+                  fontWeight="bold"
+                  className="drop-shadow-[0_2px_6px_rgba(0,0,0,0.9)]"
+                  transform={`rotate(${rotationHeading} ${labelX} ${labelY})`}
+                >
+                  {direction.label}
+                </text>
               );
             })}
           </g>
 
-          {/* Wind arrow (cyan, fixed relative to compass rotation) */}
+          {/* Wind arrow (cyan) */}
           {hasWind && (
             <g transform={`rotate(${windArrowRotation} ${radius} ${radius})`}>
-              {/* Arrow shaft */}
               <line
                 x1={radius}
                 y1={radius}
                 x2={radius}
-                y2={radius - 38}
+                y2={radius - 50}
                 stroke="#06b6d4"
-                strokeWidth="4"
+                strokeWidth="5"
                 strokeLinecap="round"
                 opacity="0.95"
               />
-              {/* Arrow head */}
               <polygon
-                points={`${radius},${radius - 44} ${radius - 7},${radius - 31} ${radius + 7},${radius - 31}`}
+                points={`${radius},${radius - 58} ${radius - 9},${radius - 42} ${radius + 9},${radius - 42}`}
                 fill="#06b6d4"
                 opacity="0.95"
               />
-              {/* Background for label */}
               <rect
-                x={radius - 20}
-                y={radius - 58}
-                width="40"
-                height="12"
-                fill="rgba(0, 0, 0, 0.8)"
-                rx="3"
+                x={radius - 25}
+                y={radius - 75}
+                width="50"
+                height="16"
+                fill="rgba(0, 0, 0, 0.85)"
+                rx="4"
               />
-              {/* Label */}
               <text
                 x={radius}
-                y={radius - 50}
+                y={radius - 62}
                 textAnchor="middle"
                 fill="#06b6d4"
-                fontSize="11"
+                fontSize="13"
                 fontWeight="bold"
                 className="drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)]"
               >
@@ -589,32 +654,61 @@ export function DeviceCompass({
             </g>
           )}
 
-          {/* Center dot */}
+          {/* Center dot with neon green glow */}
           <circle
             cx={radius}
             cy={radius}
-            r="4"
-            fill="white"
-            opacity="0.9"
+            r="8"
+            fill="#10b981"
+            opacity="0.3"
+            filter="url(#glow)"
+          />
+          <circle
+            cx={radius}
+            cy={radius}
+            r="5"
+            fill="#10b981"
+            opacity="0.95"
           />
 
-          {/* Device heading pointer (red triangle outline - positioned to show point) */}
+          {/* Glow filter */}
+          <defs>
+            <filter id="glow">
+              <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+              <feMerge>
+                <feMergeNode in="coloredBlur"/>
+                <feMergeNode in="SourceGraphic"/>
+              </feMerge>
+            </filter>
+          </defs>
+
+          {/* Device heading pointer (red triangle) */}
           <polygon
-            points={`${radius},8 ${radius - 16},34 ${radius + 16},34`}
+            points={`${radius},12 ${radius - 20},45 ${radius + 20},45`}
             fill="none"
             stroke="#ef4444"
-            strokeWidth="1.5"
+            strokeWidth="2.5"
             opacity="0.95"
           />
         </svg>
 
-        {/* Calibration indicator */}
-        {isCalibrating && permissionState === 'granted' && !useGpsFallback && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/60 rounded-full">
-            <div className="text-center text-xs text-white font-semibold drop-shadow-lg">
-              <div className="mb-2 text-sm">Move device in</div>
-              <div className="font-bold text-base">figure-8 pattern</div>
-              <div className="mt-1">to calibrate</div>
+        {/* Calibration indicator - text only, smaller */}
+        {(isCalibrating || manualRecalibrating) && permissionState === 'granted' && !useGpsFallback && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/80 rounded-full border-4 border-emerald-400/30">
+            <div className="text-center text-xs font-semibold drop-shadow-lg px-4">
+              <div className="mb-1 text-sm text-emerald-400">Move device in</div>
+              <div className="font-bold text-base text-emerald-400">figure-8 pattern</div>
+              <div className="mt-1 text-emerald-400/80 text-[10px]">to calibrate</div>
+            </div>
+          </div>
+        )}
+        
+        {/* Calibration complete message */}
+        {calibrationComplete && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/75 rounded-full border-4 border-emerald-400/50">
+            <div className="text-center text-white font-semibold drop-shadow-lg">
+              <div className="text-2xl text-emerald-400 mb-2">✓</div>
+              <div className="text-base text-emerald-300">Calibration Complete</div>
             </div>
           </div>
         )}
@@ -623,13 +717,24 @@ export function DeviceCompass({
       {/* Speed display with unit selector */}
       <button
         onClick={cycleSpeedUnit}
-        className="px-4 py-1.5 bg-slate-800/90 rounded-lg border border-white/20 hover:bg-slate-700/90 transition-colors"
+        className="px-6 py-2 bg-gradient-to-r from-slate-800/95 to-slate-900/95 rounded-xl border-2 border-emerald-400/50 hover:border-emerald-400/80 hover:shadow-lg hover:shadow-emerald-500/30 transition-all backdrop-blur-sm"
       >
-        <div className="text-white font-bold text-lg drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)]">
-          {speedDisplay.value}
-          <span className="text-sm ml-1 text-white/80">{speedDisplay.unit}</span>
+        <div className="text-white font-semibold text-lg drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)]">
+          <span className="text-emerald-400">{speedDisplay.value}</span>
+          <span className="text-base ml-2 text-white/80">{speedDisplay.unit}</span>
         </div>
       </button>
+      
+      {/* Recalibrate button - only show when sensors are active and not in GPS mode */}
+      {permissionState === 'granted' && !useGpsFallback && !showPermissionPrompt && (
+        <button
+          onClick={handleRecalibrate}
+          disabled={manualRecalibrating || calibrationComplete}
+          className="text-emerald-400 hover:text-emerald-300 text-xs font-light tracking-wide transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {manualRecalibrating ? 'Calibrating...' : calibrationComplete ? 'Complete ✓' : 'Recalibrate'}
+        </button>
+      )}
     </div>
   );
 }

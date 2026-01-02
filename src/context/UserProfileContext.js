@@ -132,7 +132,8 @@ export function UserProfileProvider({ children }) {
         try {
           await updateMapPreferences(user.uid, newPreferences);
         } catch (error) {
-
+          console.warn("[UserProfileContext] Error updating map preferences:", error.message);
+          // Continue silently - local state already updated
         }
       }
     },
@@ -171,7 +172,7 @@ export function UserProfileProvider({ children }) {
             await addFavorite(user.uid, type, itemId);
           }
         } catch (error) {
-
+          console.warn("[UserProfileContext] Error syncing favorite to Firestore:", error.message);
           // Revert on error
           setProfile((prev) => {
             const currentFavorites = prev.favorites?.[type] || [];
