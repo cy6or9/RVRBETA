@@ -1,7 +1,7 @@
 // src/components/DeviceCompass.tsx
 import * as React from "react";
 import { cn } from "@/lib/utils";
-import { useDeviceHeading } from "@/hooks/useDeviceHeading";
+import { useDeviceNav } from "@/hooks/useDeviceNav";
 
 interface DeviceCompassProps {
   /** Wind direction in meteorological degrees (0 = from North, 90 = from East) */
@@ -10,8 +10,8 @@ interface DeviceCompassProps {
   windSpeedMph?: number | null;
   /** Size of the compass in pixels */
   size?: number;
-  /** Show permission request UI */
-  onRequestPermission?: () => void;
+  /** User's current GPS location */
+  userLocation?: { lat: number; lon: number } | null;
 }
 
 type SpeedUnit = 'mph' | 'knots' | 'kmh';
@@ -43,65 +43,113 @@ const convertSpeed = {
 };
 
 /**
- * Device-orientation compass that uses multi-source heading strategy.
- * Features GPS fusion, circular mean smoothing, and per-device calibration.
- * Shows both device heading and wind direction (cyan arrow).
+ * Device-orientation compass using multi-source heading strategy.
+ * Uses useDeviceNav hook for all sensor and GPS logic.
  */
 export function DeviceCompass({ 
   windDirectionDeg, 
   windSpeedMph,
   size = 160,
-  onRequestPermission
+  userLocation,
 }: DeviceCompassProps) {
-  // Use the new multi-source heading hook
+  // Use the navigation hook
   const {
-    headingDeg,
+    activeHeadingDeg,
+    deviceHeadingDeg,
+    travelCourseDeg,
+    speedMph,
     source,
     quality,
-    speedMph,
+    gpsAccuracyM,
+    mode,
+    setMode,
+    autoModeEnabled,
+    setAutoModeEnabled,
+    baseMode,
+    setBaseMode,
     offsetDeg,
     setOffsetDeg,
-    permissionState,
-    requestPermission,
-  } = useDeviceHeading();
+    requestMotionPermission,
+    rawAlpha,
+    rawBeta,
+    rawGamma,
+    webkitAccuracy,
+  } = useDeviceNav();
 
   const [speedUnit, setSpeedUnit] = React.useState<SpeedUnit>('mph');
   const [showDebug, setShowDebug] = React.useState(false);
+  const [showAdvanced, setShowAdvanced] = React.useState(false);
+  const [showInfoTooltip, setShowInfoTooltip] = React.useState(false);
+  const [permissionState, setPermissionState] = React.useState<'prompt' | 'granted' | 'denied'>('prompt');
+  const [isCalibrating, setIsCalibrating] = React.useState(false);
+  const [calibrationCountdown, setCalibrationCountdown] = React.useState(0);
+  const [calibrationMode, setCalibrationMode] = React.useState<'northUp' | 'figure8'>('figure8');
+  
   const rotationHeadingRef = React.useRef<number>(0);
-  const smoothingFactorRef = React.useRef<number>(1.0);
 
-  // Smooth rotation for continuous compass movement (handle 359° → 0° wrap)
+  // Check initial permission state
   React.useEffect(() => {
-    if (headingDeg === null) return;
+    if (typeof window === "undefined") return;
+    if (typeof (DeviceOrientationEvent as any).requestPermission !== "function") {
+      setPermissionState('granted');
+    }
+  }, []);
+
+  // Smooth rotation with adaptive smoothing based on quality
+  React.useEffect(() => {
+    if (activeHeadingDeg === null) return;
     
     const current = rotationHeadingRef.current;
-    let target = headingDeg;
+    let target = activeHeadingDeg;
     let diff = target - (current % 360);
     
     // Take shortest angular path
     while (diff > 180) diff -= 360;
     while (diff < -180) diff += 360;
     
-    // Adaptive smoothing: higher quality = faster response, lower quality = more smoothing
-    // This helps on Android where quality varies
-    let smoothingFactor = 1.0;
-    if (quality < 0.5) {
-      smoothingFactor = 0.3; // Heavy smoothing for poor quality
-    } else if (quality < 0.7) {
-      smoothingFactor = 0.5; // Medium smoothing
-    } else {
-      smoothingFactor = 0.8; // Light smoothing for good quality
-    }
-    smoothingFactorRef.current = smoothingFactor;
+    // Adaptive smoothing: high quality = faster response
+    // Android gets extra smoothing due to noisier sensors
+    const isAndroid = !/iPad|iPhone|iPod/.test(navigator.userAgent);
+    let smoothingFactor = 0.7;
     
-    // Apply smoothed rotation
+    if (isAndroid) {
+      // More aggressive smoothing for Android
+      if (quality < 0.5) {
+        smoothingFactor = 0.15; // Very smooth
+      } else if (quality < 0.7) {
+        smoothingFactor = 0.25; // Smooth
+      } else {
+        smoothingFactor = 0.4; // Balanced
+      }
+    } else {
+      // iOS smoothing (less needed)
+      if (quality < 0.5) {
+        smoothingFactor = 0.3;
+      } else if (quality > 0.8) {
+        smoothingFactor = 0.9;
+      }
+    }
+    
     rotationHeadingRef.current = current + diff * smoothingFactor;
-  }, [headingDeg, quality]);
+  }, [activeHeadingDeg, quality]);
 
   const handleRequestPermission = async () => {
-    await requestPermission();
-    if (onRequestPermission) {
-      onRequestPermission();
+    try {
+      const result = await requestMotionPermission();
+      if (result === 'granted') {
+        setPermissionState('granted');
+        // Force a small delay to ensure sensors initialize
+        setTimeout(() => {
+          console.log('[DeviceCompass] Sensors should be active now');
+        }, 100);
+      } else if (result === 'denied') {
+        setPermissionState('denied');
+      } else {
+        setPermissionState('granted'); // not-needed
+      }
+    } catch (error) {
+      console.error('[DeviceCompass] Permission request error:', error);
+      setPermissionState('denied');
     }
   };
 
@@ -112,10 +160,10 @@ export function DeviceCompass({
     let value: number;
     switch (speedUnit) {
       case 'knots':
-        value = convertSpeed.mphToKnots(speedMph);
+        value = speedMph * 0.868976;
         break;
       case 'kmh':
-        value = convertSpeed.mphToKmh(speedMph);
+        value = speedMph * 1.60934;
         break;
       default:
         value = speedMph;
@@ -131,14 +179,13 @@ export function DeviceCompass({
     setSpeedUnit(units[nextIndex]);
   };
 
-  // Calculate wind direction relative to device heading
+  // Calculate wind direction relative to compass
   const hasWind = windDirectionDeg != null && !Number.isNaN(windDirectionDeg);
-  const hasHeading = headingDeg !== null;
+  const hasHeading = activeHeadingDeg !== null;
   
   // Wind arrow points TO where wind is going (opposite of FROM direction)
   const windToDirection = hasWind ? (windDirectionDeg! + 180) % 360 : 0;
   
-  // Wind arrow rotation relative to compass (which rotates with device)
   const rotationHeading = rotationHeadingRef.current;
   const windArrowRotation = hasWind && hasHeading 
     ? windToDirection - rotationHeading
@@ -150,17 +197,18 @@ export function DeviceCompass({
   const speedDisplay = getSpeedDisplay();
 
   // Source display names
-  const sourceDisplayName = {
+  const sourceDisplayName: Record<string, string> = {
     'ios-webkit': 'iOS Compass',
-    'absolute-orientation-sensor': 'Abs Orient Sensor',
-    'deviceorientationabsolute': 'Device Orient (Abs)',
-    'deviceorientation': 'Device Orient',
-    'gps': 'GPS Course',
+    'android-compass-math': 'Android Compass',
+    'absolute-orientation-sensor': 'Sensor API',
+    'gps-course': 'GPS Course',
+    'none': 'No Sensor',
   };
 
   return (
-    <div className="flex flex-col items-center gap-4">
-      {/* Permission request UI */}
+    <>
+      <div className="flex flex-col items-center gap-4">
+        {/* Permission request UI */}
       {permissionState === 'prompt' && (
         <button
           onClick={handleRequestPermission}
@@ -172,22 +220,16 @@ export function DeviceCompass({
       
       {permissionState === 'denied' && (
         <div className="px-5 py-3 text-sm bg-red-900/50 text-red-100 font-semibold rounded-lg border-2 border-red-500/70 shadow-lg shadow-red-500/30">
-          Sensor access denied. Using GPS fallback.
-        </div>
-      )}
-      
-      {permissionState === 'checking' && (
-        <div className="px-5 py-3 text-sm bg-emerald-900/50 text-emerald-100 font-semibold rounded-lg border-2 border-emerald-500/70 shadow-lg shadow-emerald-500/30">
-          Checking sensors...
+          Sensor access denied. Speed may still work with location.
         </div>
       )}
 
-      {/* Info display - heading above compass */}
+      {/* Info display */}
       <div className="flex flex-col items-center gap-2">
         <div className="flex items-center gap-3 bg-black/70 backdrop-blur-sm px-4 py-2 rounded-xl border-2 border-emerald-400/50 shadow-lg shadow-emerald-500/30">
           <div className="text-white font-semibold drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)] text-sm">
             HDG: <span className="text-emerald-400 text-base">
-              {hasHeading ? `${Math.round(headingDeg)}°` : '—'}
+              {hasHeading ? `${Math.round(activeHeadingDeg)}°` : '—'}
             </span>
           </div>
           {hasWind && (
@@ -205,17 +247,9 @@ export function DeviceCompass({
         )}
       </div>
 
-      {/* Debug info toggle */}
-      <button
-        onClick={() => setShowDebug(!showDebug)}
-        className="text-xs text-white/50 hover:text-white/80 transition-colors"
-      >
-        {showDebug ? '▲ Hide Debug' : '▼ Show Debug'}
-      </button>
-
       {/* Debug information panel */}
-      {showDebug && source && (
-        <div className="bg-black/80 backdrop-blur-sm px-4 py-3 rounded-lg border border-white/20 text-xs font-mono space-y-1">
+      {showDebug && (
+        <div className="bg-black/80 backdrop-blur-sm px-4 py-3 rounded-lg border border-white/20 text-xs font-mono space-y-1 w-full max-w-sm">
           <div className="text-white/70">
             Source: <span className="text-emerald-400">{sourceDisplayName[source] || source}</span>
           </div>
@@ -224,6 +258,21 @@ export function DeviceCompass({
           </div>
           <div className="text-white/70">
             Speed: <span className="text-emerald-400">{speedMph.toFixed(1)} mph</span>
+          </div>
+          <div className="text-white/70">
+            GPS Accuracy: <span className="text-emerald-400">
+              {gpsAccuracyM !== null ? `${gpsAccuracyM.toFixed(0)}m` : '—'}
+            </span>
+          </div>
+          <div className="text-white/70">
+            Device Hdg: <span className="text-emerald-400">
+              {deviceHeadingDeg !== null ? `${Math.round(deviceHeadingDeg)}°` : '—'}
+            </span>
+          </div>
+          <div className="text-white/70">
+            Travel Course: <span className="text-cyan-400">
+              {travelCourseDeg !== null ? `${Math.round(travelCourseDeg)}°` : '—'}
+            </span>
           </div>
           <div className="text-white/70">
             Offset: <span className="text-emerald-400">{offsetDeg.toFixed(0)}°</span>
@@ -275,7 +324,7 @@ export function DeviceCompass({
               );
             })}
             
-            {/* Direction labels - 16 compass points */}
+            {/* Direction labels */}
             {DIRECTIONS.map((direction) => {
               const rad = (direction.angle - 90) * (Math.PI / 180);
               const labelRadius = radius - 28;
@@ -396,9 +445,14 @@ export function DeviceCompass({
       {/* Calibration controls */}
       {permissionState === 'granted' && (
         <div className="flex flex-col items-center gap-2">
-          <div className="text-white/60 text-xs font-semibold tracking-wide">
-            CALIBRATION OFFSET: {offsetDeg.toFixed(0)}°
+          <div className="text-emerald-400 text-xs font-semibold tracking-wide">
+            CALIBRATION: {offsetDeg.toFixed(0)}°
           </div>
+          {isCalibrating && (
+            <div className="text-emerald-400 text-[10px] animate-pulse max-w-xs text-center">
+              Move device in figure-8 motion...
+            </div>
+          )}
           <div className="flex items-center gap-2">
             <button
               onClick={() => setOffsetDeg(prev => prev - 1)}
@@ -407,10 +461,37 @@ export function DeviceCompass({
               -1°
             </button>
             <button
-              onClick={() => setOffsetDeg(() => 0)}
+              onClick={() => {
+                if (offsetDeg === 0 && calibrationMode === 'figure8') {
+                  // Start figure-8 calibration routine
+                  setIsCalibrating(true);
+                  setCalibrationCountdown(7);
+                  const interval = setInterval(() => {
+                    setCalibrationCountdown(prev => {
+                      if (prev <= 1) {
+                        clearInterval(interval);
+                        setIsCalibrating(false);
+                        // After figure-8, reset offset to 0 and trust the sensors
+                        // The figure-8 motion calibrates the device's magnetometer
+                        setOffsetDeg(() => 0);
+                        return 0;
+                      }
+                      return prev - 1;
+                    });
+                  }, 1000);
+                } else if (offsetDeg === 0 && calibrationMode === 'northUp') {
+                  // Set current direction as North
+                  if (deviceHeadingDeg !== null) {
+                    const adjustment = Math.round(deviceHeadingDeg % 360);
+                    setOffsetDeg(() => -adjustment);
+                  }
+                } else {
+                  setOffsetDeg(() => 0);
+                }
+              }}
               className="px-4 py-1.5 bg-emerald-700/80 hover:bg-emerald-600/80 text-white rounded-lg text-sm font-semibold transition-colors border border-emerald-400/30"
             >
-              Reset
+              {isCalibrating ? `Calibrate ${calibrationCountdown}s` : 'Reset'}
             </button>
             <button
               onClick={() => setOffsetDeg(prev => prev + 1)}
@@ -421,6 +502,269 @@ export function DeviceCompass({
           </div>
         </div>
       )}
+
+      {/* Settings controls */}
+      <div className="flex flex-col items-center gap-2 w-full max-w-sm">
+        <button
+          onClick={() => setShowAdvanced(!showAdvanced)}
+          className="text-xs text-emerald-400 hover:text-emerald-300 transition-colors font-medium"
+        >
+          {showAdvanced ? '▲ Hide Settings' : '▼ Settings'}
+        </button>
+
+        {showAdvanced && (
+          <div className="bg-black/90 backdrop-blur-sm px-4 py-4 rounded-lg border border-emerald-400/30 w-full space-y-4">
+            {/* Mode Selection */}
+            <div className="space-y-2">
+              <div className="text-xs text-emerald-400 font-semibold">Navigation Mode</div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    if (autoModeEnabled) {
+                      setBaseMode('device');
+                    } else {
+                      setMode('device');
+                    }
+                  }}
+                  className={
+                    cn(
+                      "flex-1 px-3 py-1.5 rounded text-xs font-semibold transition-colors border",
+                      (autoModeEnabled ? baseMode === 'device' : mode === 'device')
+                        ? "bg-emerald-500 text-white border-emerald-400"
+                        : "bg-slate-800/50 text-white/60 hover:text-white/80 border-white/20"
+                    )
+                  }
+                >
+                  DEVICE
+                </button>
+                <button
+                  onClick={() => {
+                    if (autoModeEnabled) {
+                      setBaseMode('travel');
+                    } else {
+                      setMode('travel');
+                    }
+                  }}
+                  className={
+                    cn(
+                      "flex-1 px-3 py-1.5 rounded text-xs font-semibold transition-colors border",
+                      (autoModeEnabled ? baseMode === 'travel' : mode === 'travel')
+                        ? "bg-emerald-500 text-white border-emerald-400"
+                        : "bg-slate-800/50 text-white/60 hover:text-white/80 border-white/20"
+                    )
+                  }
+                >
+                  TRAVEL
+                </button>
+              </div>
+            </div>
+
+            {/* Manual Calibration Mode */}
+            <div className="space-y-2 pt-2 border-t border-white/10">
+              <div className="text-xs text-emerald-400 font-semibold">Manual Calibration</div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setCalibrationMode('northUp')}
+                  className={
+                    cn(
+                      "flex-1 px-3 py-1.5 rounded text-xs font-semibold transition-colors border",
+                      calibrationMode === 'northUp'
+                        ? "bg-emerald-500 text-white border-emerald-400"
+                        : "bg-slate-800/50 text-white/60 hover:text-white/80 border-white/20"
+                    )
+                  }
+                >
+                  North Up
+                </button>
+                <button
+                  onClick={() => setCalibrationMode('figure8')}
+                  className={
+                    cn(
+                      "flex-1 px-3 py-1.5 rounded text-xs font-semibold transition-colors border",
+                      calibrationMode === 'figure8'
+                        ? "bg-emerald-500 text-white border-emerald-400"
+                        : "bg-slate-800/50 text-white/60 hover:text-white/80 border-white/20"
+                    )
+                  }
+                >
+                  Figure 8
+                </button>
+              </div>
+              <div className="text-[10px] text-emerald-400">-When Reset is clicked at 0° offset.</div>
+            </div>
+
+            {/* Auto Mode Toggle */}
+            <div className="flex items-center justify-between pt-2 border-t border-white/10">
+              <div className="space-y-0.5">
+                <div className="text-xs text-emerald-400 font-semibold">Auto Mode</div>
+                <div className="text-[10px] text-emerald-400">Switch to travel at 2.5+ mph</div>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={autoModeEnabled}
+                  onChange={(e) => setAutoModeEnabled(e.target.checked)}
+                  className="sr-only peer"
+                />
+                <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500"></div>
+              </label>
+            </div>
+
+            {/* Raw Sensor Values */}
+            {(rawAlpha !== null || rawBeta !== null || rawGamma !== null) && (
+              <div className="text-xs font-mono space-y-1 pt-2 border-t border-white/10">
+                <div className="text-emerald-400 mb-1">Raw Sensor Values:</div>
+                {rawAlpha !== null && (
+                  <div className="text-emerald-400">α: {rawAlpha.toFixed(1)}°</div>
+                )}
+                {rawBeta !== null && (
+                  <div className="text-emerald-400">β: {rawBeta.toFixed(1)}°</div>
+                )}
+                {rawGamma !== null && (
+                  <div className="text-emerald-400">γ: {rawGamma.toFixed(1)}°</div>
+                )}
+                {webkitAccuracy !== null && (
+                  <div className="text-emerald-400">Webkit Acc: {webkitAccuracy.toFixed(1)}</div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Info Section - Below Settings */}
+      <div className="flex flex-col items-start gap-2 w-full max-w-sm">
+        <button
+          onClick={() => setShowInfoTooltip(!showInfoTooltip)}
+          className="flex items-center gap-2 px-3 py-1.5 rounded bg-black/90 backdrop-blur-sm border-2 border-emerald-400/50 hover:border-emerald-400/80 hover:bg-emerald-500/20 transition-all shadow-lg shadow-emerald-500/20"
+          title="Toggle help information"
+        >
+          <span className="text-emerald-400 text-sm font-bold">i</span>
+          <span className="text-xs text-emerald-400 font-medium">Help & Info</span>
+        </button>
+
+        {/* Info Dropdown */}
+        {showInfoTooltip && (
+          <div className="w-full bg-black/95 backdrop-blur-md rounded-lg border-2 border-emerald-400/50 shadow-2xl shadow-emerald-500/30 max-h-[60vh] overflow-y-auto">
+            <div className="p-4 space-y-4 text-xs text-emerald-400">
+            {/* How to Use */}
+            <div>
+              <h3 className="text-sm font-semibold text-emerald-400 mb-2 flex items-center gap-2">
+                <span className="text-emerald-400">●</span> How to Use
+              </h3>
+              <div className="space-y-1.5 pl-4">
+                <div className="flex items-start gap-2">
+                  <span className="text-emerald-400 font-bold">1.</span>
+                  <span>Tap "Enable Motion & Orientation" to grant sensor access (works on all browsers that support it)</span>
+                </div>
+                <div className="flex items-start gap-2">
+                  <span className="text-emerald-400 font-bold">2.</span>
+                  <span>If sensors aren't available, the compass automatically falls back to GPS + map bearing</span>
+                </div>
+                <div className="flex items-start gap-2">
+                  <span className="text-emerald-400 font-bold">3.</span>
+                  <span>If prompted to calibrate, move your device in a figure-8 pattern</span>
+                </div>
+                <div className="flex items-start gap-2">
+                  <span className="text-emerald-400 font-bold">4.</span>
+                  <span>The red triangle shows your current heading direction</span>
+                </div>
+                <div className="flex items-start gap-2">
+                  <span className="text-emerald-400 font-bold">5.</span>
+                  <span>The cyan arrow shows where the wind is blowing TO (not from)</span>
+                </div>
+                <div className="flex items-start gap-2">
+                  <span className="text-emerald-400 font-bold">6.</span>
+                  <span>Tap the speed display to cycle between mph, knots, and km/h</span>
+                </div>
+                <div className="flex items-start gap-2">
+                  <span className="text-emerald-400 font-bold">7.</span>
+                  <span>The compass face rotates as you turn, keeping North at the top of the world</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Location Info */}
+            {userLocation && (
+              <div className="text-center text-emerald-400/80 text-[11px] border-t border-emerald-400/20 pt-2">
+                Location: {userLocation.lat.toFixed(4)}°, {userLocation.lon.toFixed(4)}°
+              </div>
+            )}
+
+            {/* Features */}
+            <div className="border-t border-emerald-400/20 pt-3">
+              <h3 className="text-sm font-semibold text-emerald-400 mb-2 flex items-center gap-2">
+                <span className="text-emerald-400">●</span> Features
+              </h3>
+              <ul className="space-y-1 pl-4">
+                <li className="flex items-center gap-2">
+                  <span className="text-emerald-400">✓</span>
+                  Real-time device orientation tracking
+                </li>
+                <li className="flex items-center gap-2">
+                  <span className="text-emerald-400">✓</span>
+                  GPS + map bearing fallback when sensors unavailable
+                </li>
+                <li className="flex items-center gap-2">
+                  <span className="text-emerald-400">✓</span>
+                  Speed calculation from GPS (mph, knots, km/h)
+                </li>
+                <li className="flex items-center gap-2">
+                  <span className="text-emerald-400">✓</span>
+                  Smooth rotation with motion damping
+                </li>
+                <li className="flex items-center gap-2">
+                  <span className="text-emerald-400">✓</span>
+                  Wind direction overlay (when location available)
+                </li>
+                <li className="flex items-center gap-2">
+                  <span className="text-emerald-400">✓</span>
+                  High-contrast text for outdoor visibility
+                </li>
+                <li className="flex items-center gap-2">
+                  <span className="text-emerald-400">✓</span>
+                  Cardinal direction labels (N, S, E, W, etc.)
+                </li>
+                <li className="flex items-center gap-2">
+                  <span className="text-emerald-400">✓</span>
+                  Degree markers for precise navigation
+                </li>
+                <li className="flex items-center gap-2">
+                  <span className="text-emerald-400">✓</span>
+                  Works on iOS and Android devices
+                </li>
+                <li className="flex items-center gap-2">
+                  <span className="text-emerald-400">✓</span>
+                  Automatic sensor detection and fallback
+                </li>
+              </ul>
+            </div>
+
+            {/* Browser Compatibility */}
+            <div className="bg-emerald-900/20 rounded-lg border border-emerald-400/30 p-3">
+              <h4 className="text-sm font-semibold text-emerald-400 mb-2">
+                Browser Compatibility
+              </h4>
+              <div className="space-y-1.5 text-[10px] text-emerald-400">
+                <p>
+                  <strong className="text-emerald-400">iOS:</strong> Requires iOS 13+ and Safari. Will prompt for motion & orientation permission.
+                </p>
+                <p>
+                  <strong className="text-emerald-400">Android:</strong> Works in Chrome, Firefox, and Samsung Internet. Permission auto-granted.
+                </p>
+                <p>
+                  <strong className="text-emerald-400">Desktop:</strong> Limited sensor support. Automatically falls back to GPS when available.
+                </p>
+                <p>
+                  <strong className="text-emerald-400">GPS Fallback:</strong> When sensors unavailable, uses GPS location tracking to calculate heading and speed from movement.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+        )}
+      </div>
     </div>
+    </>
   );
 }
