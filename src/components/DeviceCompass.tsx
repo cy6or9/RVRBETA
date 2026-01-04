@@ -86,6 +86,10 @@ export function DeviceCompass({
   const [calibrationMode, setCalibrationMode] = React.useState<'northUp' | 'figure8'>('figure8');
   
   const rotationHeadingRef = React.useRef<number>(0);
+  const lastValidSpeedRef = React.useRef<number>(0);
+  const lastMovementTimestampRef = React.useRef<number>(0);
+  const consecutiveValidSamplesRef = React.useRef<number>(0);
+  const [displaySpeed, setDisplaySpeed] = React.useState<number>(0);
 
   // Check initial permission state
   React.useEffect(() => {
@@ -95,7 +99,7 @@ export function DeviceCompass({
     }
   }, []);
 
-  // Smooth rotation with adaptive smoothing based on quality
+  // Smooth rotation - fixed interpolation to avoid jitter
   React.useEffect(() => {
     if (activeHeadingDeg === null) return;
     
@@ -107,31 +111,77 @@ export function DeviceCompass({
     while (diff > 180) diff -= 360;
     while (diff < -180) diff += 360;
     
-    // Adaptive smoothing: high quality = faster response
-    // Android gets extra smoothing due to noisier sensors
+    // Fixed interpolation - hook already handles smoothing
     const isAndroid = !/iPad|iPhone|iPod/.test(navigator.userAgent);
-    let smoothingFactor = 0.7;
+    let lerp = 0.7;
     
     if (isAndroid) {
-      // More aggressive smoothing for Android
-      if (quality < 0.5) {
-        smoothingFactor = 0.15; // Very smooth
-      } else if (quality < 0.7) {
-        smoothingFactor = 0.25; // Smooth
-      } else {
-        smoothingFactor = 0.4; // Balanced
-      }
+      // Fixed smooth interpolation for Android
+      lerp = 0.18;
     } else {
-      // iOS smoothing (less needed)
+      // iOS: keep quality-based behavior
       if (quality < 0.5) {
-        smoothingFactor = 0.3;
+        lerp = 0.3;
       } else if (quality > 0.8) {
-        smoothingFactor = 0.9;
+        lerp = 0.9;
       }
     }
     
-    rotationHeadingRef.current = current + diff * smoothingFactor;
+    // Update rotation with fixed interpolation
+    let newRotation = current + diff * lerp;
+    // Normalize to 0-360
+    newRotation = ((newRotation % 360) + 360) % 360;
+    rotationHeadingRef.current = newRotation;
   }, [activeHeadingDeg, quality]);
+
+  // Speed filtering with dead zone and decay
+  React.useEffect(() => {
+    const now = Date.now();
+    const SPEED_THRESHOLD = 0.8; // mph
+    const ACCURACY_THRESHOLD = 30; // meters
+    const DECAY_DURATION = 2000; // 2 seconds
+    const MIN_VALID_SAMPLES = 2;
+
+    // Check if speed is valid (not GPS jitter)
+    const isValidSpeed = speedMph >= SPEED_THRESHOLD && 
+                         (gpsAccuracyM === null || gpsAccuracyM <= ACCURACY_THRESHOLD);
+
+    if (isValidSpeed) {
+      // Valid speed detected
+      consecutiveValidSamplesRef.current += 1;
+      
+      if (consecutiveValidSamplesRef.current >= MIN_VALID_SAMPLES) {
+        // Confirmed movement - update display immediately
+        lastValidSpeedRef.current = speedMph;
+        lastMovementTimestampRef.current = now;
+        setDisplaySpeed(speedMph);
+      }
+    } else {
+      // Below threshold or poor accuracy
+      consecutiveValidSamplesRef.current = 0;
+      
+      if (lastMovementTimestampRef.current > 0) {
+        const timeSinceMovement = now - lastMovementTimestampRef.current;
+        
+        if (gpsAccuracyM !== null && gpsAccuracyM > 50) {
+          // Very poor accuracy - snap to zero
+          setDisplaySpeed(0);
+          lastValidSpeedRef.current = 0;
+        } else if (timeSinceMovement < DECAY_DURATION) {
+          // Decay to zero over 2 seconds
+          const decayFactor = 1 - (timeSinceMovement / DECAY_DURATION);
+          setDisplaySpeed(lastValidSpeedRef.current * decayFactor);
+        } else {
+          // Decay complete
+          setDisplaySpeed(0);
+          lastValidSpeedRef.current = 0;
+        }
+      } else {
+        // Never moved or already at zero
+        setDisplaySpeed(0);
+      }
+    }
+  }, [speedMph, gpsAccuracyM]);
 
   const handleRequestPermission = async () => {
     try {
@@ -155,18 +205,18 @@ export function DeviceCompass({
 
   // Format speed display
   const getSpeedDisplay = () => {
-    if (speedMph === 0) return { value: '0.0', unit: speedUnit };
+    if (displaySpeed === 0 || displaySpeed < 0.1) return { value: '0.0', unit: speedUnit };
     
     let value: number;
     switch (speedUnit) {
       case 'knots':
-        value = speedMph * 0.868976;
+        value = displaySpeed * 0.868976;
         break;
       case 'kmh':
-        value = speedMph * 1.60934;
+        value = displaySpeed * 1.60934;
         break;
       default:
-        value = speedMph;
+        value = displaySpeed;
     }
     
     return { value: value.toFixed(1), unit: speedUnit };
@@ -187,8 +237,13 @@ export function DeviceCompass({
   const windToDirection = hasWind ? (windDirectionDeg! + 180) % 360 : 0;
   
   const rotationHeading = rotationHeadingRef.current;
+  
+  // Android rotation direction fix: flip sign at render layer only
+  const isAndroid = !/iPad|iPhone|iPod/.test(navigator.userAgent);
+  const uiRotationHeading = isAndroid ? -rotationHeading : rotationHeading;
+  
   const windArrowRotation = hasWind && hasHeading 
-    ? windToDirection - rotationHeading
+    ? windToDirection - uiRotationHeading
     : hasWind 
       ? windToDirection 
       : 0;
@@ -257,7 +312,7 @@ export function DeviceCompass({
             Quality: <span className="text-emerald-400">{(quality * 100).toFixed(0)}%</span>
           </div>
           <div className="text-white/70">
-            Speed: <span className="text-emerald-400">{speedMph.toFixed(1)} mph</span>
+            Speed: <span className="text-emerald-400">{displaySpeed.toFixed(1)} mph</span> (raw: {speedMph.toFixed(1)})
           </div>
           <div className="text-white/70">
             GPS Accuracy: <span className="text-emerald-400">
@@ -297,7 +352,7 @@ export function DeviceCompass({
           style={{ pointerEvents: 'none' }}
         >
           {/* Degree tick marks */}
-          <g transform={hasHeading ? `rotate(${-rotationHeading} ${radius} ${radius})` : ''}>
+          <g transform={hasHeading ? `rotate(${-uiRotationHeading} ${radius} ${radius})` : ''}>
             {Array.from({ length: 36 }, (_, i) => i * 10).map((angle) => {
               const isMajor = angle % 30 === 0;
               const rad = (angle - 90) * (Math.PI / 180);
@@ -344,7 +399,7 @@ export function DeviceCompass({
                   fontSize={isNorth ? "20" : isMajor ? "18" : "12"}
                   fontWeight="bold"
                   className="drop-shadow-[0_2px_6px_rgba(0,0,0,0.9)]"
-                  transform={`rotate(${rotationHeading} ${labelX} ${labelY})`}
+                  transform={`rotate(${uiRotationHeading} ${labelX} ${labelY})`}
                 >
                   {direction.label}
                 </text>

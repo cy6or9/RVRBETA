@@ -71,9 +71,12 @@ const CALIBRATION_KEY = "compass-calibration-offset-v2";
 const AUTO_MODE_KEY = "compass-auto-mode-enabled";
 const BASE_MODE_KEY = "compass-base-mode";
 const HEADING_BUFFER_SIZE_IOS = 15;
-const HEADING_BUFFER_SIZE_ANDROID = 50; // Larger for much smoother Android rotation
+const HEADING_BUFFER_SIZE_ANDROID = 22; // Optimized for smooth Android rotation
 const SPEED_BUFFER_SIZE = 6;
 const AUTO_MODE_SPEED_THRESHOLD = 2.5; // mph
+const SPIKE_REJECTION_ANGLE_DEG = 30; // Reject heading changes > 30° at low speed
+const SPIKE_REJECTION_SPEED_MPS = 1.5; // ~3.4 mph
+const PITCH_ROLL_MAX_DEG = 60; // Reject samples with excessive tilt
 const GPS_MIN_ACCURACY_M = 50;
 const GPS_MIN_DISTANCE_M = 5;
 const GPS_MIN_INTERVAL_S = 0.8;
@@ -103,18 +106,27 @@ const angularDifference = (a: number, b: number): number => {
 };
 
 /**
- * Circular mean of angles with quality weighting
+ * Circular mean of angles with quality and recency weighting
  * Uses sin/cos method, NOT linear averaging
+ * Newer samples weighted slightly higher for Android responsiveness
  */
-const circularMean = (samples: HeadingSample[]): number => {
+const circularMean = (samples: HeadingSample[], isAndroid: boolean = false): number => {
   if (samples.length === 0) return 0;
 
   let sumSin = 0;
   let sumCos = 0;
   let totalWeight = 0;
 
-  for (const sample of samples) {
-    const weight = sample.quality;
+  for (let i = 0; i < samples.length; i++) {
+    const sample = samples[i];
+    let weight = sample.quality;
+    
+    // Android: weight newer samples slightly higher (1.0 to 1.3x)
+    if (isAndroid && samples.length > 1) {
+      const recencyFactor = 1.0 + (i / (samples.length - 1)) * 0.3;
+      weight *= recencyFactor;
+    }
+    
     const rad = deg2rad(sample.heading);
     sumSin += Math.sin(rad) * weight;
     sumCos += Math.cos(rad) * weight;
@@ -170,10 +182,13 @@ const calculateBearing = (
 };
 
 /**
- * Android compass heading from alpha/beta/gamma using rotation matrices
+ * Android compass heading from alpha/beta/gamma using full rotation matrix
+ * with proper tilt compensation.
  * 
- * Corrected formula to fix 180° pole flip issue.
- * The heading represents the direction the TOP of the device points to.
+ * Uses W3C DeviceOrientation spec rotation matrix (Z-X'-Y'') to compute:
+ * - heading: compass direction (0-360°)
+ * - pitch: forward/backward tilt
+ * - roll: left/right tilt
  * 
  * Reference: https://www.w3.org/TR/orientation-event/
  */
@@ -182,13 +197,13 @@ const computeAndroidCompassHeading = (
   beta: number,
   gamma: number,
   screenOrientation: number
-): number => {
+): { headingDeg: number; pitchDeg: number; rollDeg: number } => {
   // Convert to radians
   const alphaRad = deg2rad(alpha);
   const betaRad = deg2rad(beta);
   const gammaRad = deg2rad(gamma);
 
-  // Rotation matrix calculations
+  // Compute rotation matrix elements (Z-X'-Y'' rotation order)
   const cA = Math.cos(alphaRad);
   const sA = Math.sin(alphaRad);
   const cB = Math.cos(betaRad);
@@ -196,22 +211,26 @@ const computeAndroidCompassHeading = (
   const cG = Math.cos(gammaRad);
   const sG = Math.sin(gammaRad);
 
-  // Compute compass heading using corrected rotation matrix projection
-  // This projects the device's forward direction onto the horizontal plane
-  // Sign correction to fix 180° flip
-  const heading = Math.atan2(
-    cB * sA + sB * sG * cA,  // Corrected signs for proper pole orientation
-    cB * cA - sB * sG * sA
-  );
+  // Full rotation matrix R = Rz(alpha) * Rx(beta) * Ry(gamma)
+  const R11 = cA * cG - sA * sB * sG;
+  const R21 = sA * cG + cA * sB * sG;
+  const R31 = -cB * sG;
+  const R32 = sB;
+  const R33 = cB * cG;
 
-  // Negate for correct compass rose rotation
-  // When device turns clockwise, compass rose rotates counterclockwise
-  let headingDeg = -rad2deg(heading);
+  // Compute tilt-compensated heading using atan2(R21, R11)
+  // This projects device forward direction onto horizontal plane
+  let headingRad = Math.atan2(R21, R11);
+  let headingDeg = normalizeAngle(rad2deg(headingRad));
 
   // Adjust for screen orientation
-  headingDeg -= screenOrientation;
+  headingDeg = normalizeAngle(headingDeg - screenOrientation);
 
-  return normalizeAngle(headingDeg);
+  // Compute pitch and roll for gating
+  const pitchDeg = rad2deg(Math.asin(R32));
+  const rollDeg = rad2deg(Math.atan2(-R31, R33));
+
+  return { headingDeg, pitchDeg, rollDeg };
 };
 
 const getScreenOrientation = (): number => {
@@ -276,6 +295,7 @@ export function useDeviceNav(): UseDeviceNavResult {
   const lastCourseRef = useRef<number | null>(null);
   const absoluteOrientationSensorRef = useRef<any>(null);
   const motionPermissionGranted = useRef<boolean>(false);
+  const lastAcceptedAndroidHeadingRef = useRef<number | null>(null);
 
   // Load persisted calibration offset and auto mode settings
   useEffect(() => {
@@ -351,6 +371,12 @@ export function useDeviceNav(): UseDeviceNavResult {
 
         // Update speed buffers and state
         if (currentSpeedMps !== null) {
+          // SUPPRESS GPS JITTER: reject very low speeds with poor accuracy
+          if (currentSpeedMps < 0.4 && (accuracy === null || accuracy > 30)) {
+            // Likely GPS noise, not real movement
+            return;
+          }
+
           speedBufferRef.current.push(currentSpeedMps);
           if (speedBufferRef.current.length > SPEED_BUFFER_SIZE) {
             speedBufferRef.current.shift();
@@ -364,6 +390,14 @@ export function useDeviceNav(): UseDeviceNavResult {
           setSpeedMph(median * 2.23694);
           lastSpeedUpdateRef.current = now;
         }
+
+        // RELIABLE MOVEMENT DETECTION
+        // True only when speed is confirmed above noise threshold with good accuracy
+        const isMovingReliable =
+          speedMps > 0.8 &&
+          accuracy !== null &&
+          accuracy < 25 &&
+          speedBufferRef.current.length >= 3;
 
         // Handle course (travel direction)
         let currentCourse: number | null = null;
@@ -403,7 +437,8 @@ export function useDeviceNav(): UseDeviceNavResult {
           }
         }
 
-        if (currentCourse !== null) {
+        // GATE COURSE UPDATES: Only update when reliably moving
+        if (currentCourse !== null && isMovingReliable) {
           lastCourseRef.current = currentCourse;
           setTravelCourseDeg(currentCourse);
         }
@@ -421,8 +456,8 @@ export function useDeviceNav(): UseDeviceNavResult {
       },
       {
         enableHighAccuracy: true,
-        maximumAge: 250,
-        timeout: 10000,
+        maximumAge: 1000,
+        timeout: 15000,
       }
     );
 
@@ -458,12 +493,13 @@ export function useDeviceNav(): UseDeviceNavResult {
 
       headingBufferRef.current.push(sample);
       // Use larger buffer on Android for smoother rotation
-      const maxSize = isIOS() ? HEADING_BUFFER_SIZE_IOS : HEADING_BUFFER_SIZE_ANDROID;
+      const android = !isIOS();
+      const maxSize = android ? HEADING_BUFFER_SIZE_ANDROID : HEADING_BUFFER_SIZE_IOS;
       if (headingBufferRef.current.length > maxSize) {
         headingBufferRef.current.shift();
       }
 
-      const mean = circularMean(headingBufferRef.current);
+      const mean = circularMean(headingBufferRef.current, android);
       const calibrated = normalizeAngle(mean + offsetDeg);
 
       setDeviceHeadingDeg(calibrated);
@@ -539,10 +575,36 @@ export function useDeviceNav(): UseDeviceNavResult {
         return;
       }
 
-      // Android: Use rotation matrix math
+      // Android: Use rotation matrix math with tilt compensation
       if (alpha !== null && beta !== null && gamma !== null) {
         const screenOrientation = getScreenOrientation();
-        const heading = computeAndroidCompassHeading(alpha, beta, gamma, screenOrientation);
+        const result = computeAndroidCompassHeading(alpha, beta, gamma, screenOrientation);
+        const { headingDeg, pitchDeg, rollDeg } = result;
+
+        // GATING: Reject samples with excessive tilt (Android only)
+        if (Math.abs(pitchDeg) > PITCH_ROLL_MAX_DEG || Math.abs(rollDeg) > PITCH_ROLL_MAX_DEG) {
+          // Sample rejected - do not add to buffer
+          return;
+        }
+
+        // RELIABLE MOVEMENT DETECTION (for spike rejection)
+        const isMovingReliable =
+          speedMps > 0.8 &&
+          gpsAccuracyM !== null &&
+          gpsAccuracyM < 25 &&
+          speedBufferRef.current.length >= 3;
+
+        // SPIKE REJECTION: Reject sudden jumps when not reliably moving (Android only)
+        if (lastAcceptedAndroidHeadingRef.current !== null) {
+          const delta = Math.abs(angularDifference(headingDeg, lastAcceptedAndroidHeadingRef.current));
+          if (delta > SPIKE_REJECTION_ANGLE_DEG && !isMovingReliable) {
+            // Likely magnetometer spike - reject
+            return;
+          }
+        }
+
+        // Sample passed all gates - accept it
+        lastAcceptedAndroidHeadingRef.current = headingDeg;
 
         // Quality based on absolute flag and sensor stability
         let qual = 0.7;
@@ -552,12 +614,15 @@ export function useDeviceNav(): UseDeviceNavResult {
           qual = 0.5; // Lower for relative
         }
 
-        // Reduce quality if beta/gamma are at extremes (unreliable)
-        if (Math.abs(beta) > 75 || Math.abs(gamma) > 75) {
-          qual *= 0.5;
+        // Reduce quality for moderate tilt (but not reject)
+        const maxTilt = Math.max(Math.abs(pitchDeg), Math.abs(rollDeg));
+        if (maxTilt > 45) {
+          qual *= 0.7;
+        } else if (maxTilt > 30) {
+          qual *= 0.85;
         }
 
-        addHeadingSample(heading, qual, "android-compass-math");
+        addHeadingSample(headingDeg, qual, "android-compass-math");
         return;
       }
 
@@ -571,7 +636,7 @@ export function useDeviceNav(): UseDeviceNavResult {
 
     window.addEventListener("deviceorientation", handler, true);
     return () => window.removeEventListener("deviceorientation", handler, true);
-  }, [addHeadingSample]);
+  }, [addHeadingSample, speedMps, gpsAccuracyM]);
 
   // Request motion permission (iOS 13+)
   const requestMotionPermission = useCallback(async (): Promise<
